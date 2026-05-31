@@ -1,60 +1,111 @@
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
-const pool = require('./db'); // Our database bridge
+const jwt = require('jsonwebtoken');
+const pool = require('./db'); 
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
-app.use(express.json()); // Allows server to read incoming JSON
+app.use(express.json()); 
 
 // ---------------------------------
-// Route: Register a New User
+// Middleware: The JWT Bouncer
+// ---------------------------------
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  
+  if (!authHeader) {
+    return res.status(401).json({ error: 'Access denied. No badge provided.' });
+  }
+
+  const token = authHeader.split(' ')[1];
+
+  try {
+    const verified = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = verified; // Attach decoded user (id, role) to the request
+    next(); 
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid or expired token.' });
+  }
+};
+
+// ---------------------------------
+// Route: Secure User Registration
 // ---------------------------------
 app.post('/api/users/register', async (req, res) => {
   try {
-    // 1. Extract the data the user sent in the request
-    const { name, email, password, is_provider } = req.body;
-
-    // 2. Scramble the password (10 rounds of hashing)
+    const { name, email, password, role } = req.body;
     const saltRounds = 10;
-    const password_hash = await bcrypt.hash(password, saltRounds);
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // 3. Send the instruction across the bridge to PostgreSQL
-    // We use $1, $2 to prevent SQL Injection attacks
     const newUser = await pool.query(
-      'INSERT INTO users (name, email, password_hash, is_provider) VALUES ($1, $2, $3, $4) RETURNING id, name, email, is_provider',
-      [name, email, password_hash, is_provider]
+      'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
+      [name, email, hashedPassword, role]
     );
 
-    // 4. Send the new user data back to the frontend as a success receipt
-    res.status(201).json(newUser.rows[0]);
-    
+    res.status(201).json({ 
+      message: 'User securely registered!', 
+      user: newUser.rows[0] 
+    });
   } catch (error) {
-    console.error('Registration Error:', error.message);
+    console.error('Error during registration:', error.message);
     res.status(500).json({ error: 'Server error during registration' });
   }
 });
 
 // ---------------------------------
-// Route: Post a New Job Request
+// Route: User Login
 // ---------------------------------
-app.post('/api/jobs', async (req, res) => {
+app.post('/api/users/login', async (req, res) => {
   try {
-    // 1. Extract the cargo details from the request
-    const { seeker_id, origin, destination, weight_kg } = req.body;
+    const { email, password } = req.body;
 
-    // 2. Send the instruction to PostgreSQL
+    const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    
+    const user = userResult.rows[0];
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, role: user.role }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '1h' } 
+    );
+
+    res.status(200).json({ 
+      message: 'Login successful!',
+      token: token, 
+      user: { id: user.id, name: user.name, role: user.role } 
+    });
+  } catch (error) {
+    console.error('Error during login:', error.message);
+    res.status(500).json({ error: 'Server error during login' });
+  }
+});
+
+// ---------------------------------
+// Route: Post a New Job Request (SECURED)
+// ---------------------------------
+app.post('/api/jobs', verifyToken, async (req, res) => {
+  try {
+    const { origin, destination, weight_kg } = req.body;
+    const seeker_id = req.user.id; // Pulled securely from the token
+
     const newJob = await pool.query(
       'INSERT INTO jobs (seeker_id, origin, destination, weight_kg) VALUES ($1, $2, $3, $4) RETURNING *',
       [seeker_id, origin, destination, weight_kg]
     );
 
-    // 3. Send the saved job receipt back to the frontend
     res.status(201).json(newJob.rows[0]);
-    
   } catch (error) {
     console.error('Job Creation Error:', error.message);
     res.status(500).json({ error: 'Server error during job creation' });
@@ -62,25 +113,78 @@ app.post('/api/jobs', async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Post a New Bid
+// Route: Get All Open Jobs (PUBLIC)
 // ---------------------------------
-app.post('/api/bids', async (req, res) => {
+app.get('/api/jobs', async (req, res) => {
   try {
-    // 1. Extract the bid details
-    const { job_id, provider_id, amount } = req.body;
+    const allJobs = await pool.query("SELECT * FROM jobs WHERE status = 'open' ORDER BY id DESC");
+    res.status(200).json(allJobs.rows);
+  } catch (error) {
+    console.error('Error fetching jobs:', error.message);
+    res.status(500).json({ error: 'Server error while fetching jobs' });
+  }
+});
 
-    // 2. Send the instruction to PostgreSQL
+// ---------------------------------
+// Route: Get Bids for a Specific Seeker (SECURED)
+// ---------------------------------
+app.get('/api/seeker/bids', verifyToken, async (req, res) => {
+  try {
+    const seekerId = req.user.id; // Pulled securely from the token
+    
+    const query = `
+      SELECT jobs.origin, jobs.destination, jobs.weight_kg, bids.amount, bids.status, bids.id AS bid_id
+      FROM jobs 
+      JOIN bids ON jobs.id = bids.job_id 
+      WHERE jobs.seeker_id = $1
+    `;
+    
+    const myBids = await pool.query(query, [seekerId]); 
+    res.status(200).json(myBids.rows);
+  } catch (error) {
+    console.error('Error fetching seeker bids:', error.message);
+    res.status(500).json({ error: 'Server error while fetching bids' });
+  }
+});
+
+// ---------------------------------
+// Route: Post a New Bid (SECURED)
+// ---------------------------------
+app.post('/api/bids', verifyToken, async (req, res) => {
+  try {
+    const { job_id, amount } = req.body;
+    const provider_id = req.user.id; // Pulled securely from the token
+
     const newBid = await pool.query(
       'INSERT INTO bids (job_id, provider_id, amount) VALUES ($1, $2, $3) RETURNING *',
       [job_id, provider_id, amount]
     );
 
-    // 3. Send the saved bid receipt back
     res.status(201).json(newBid.rows[0]);
-    
   } catch (error) {
     console.error('Bid Creation Error:', error.message);
     res.status(500).json({ error: 'Server error during bid creation' });
+  }
+});
+
+// ---------------------------------
+// Route: Accept a Bid (SECURED)
+// ---------------------------------
+app.put('/api/bids/:id/accept', verifyToken, async (req, res) => {
+  try {
+    const bidId = req.params.id;
+
+    await pool.query('UPDATE bids SET status = $1 WHERE id = $2', ['accepted', bidId]);
+
+    const bidResult = await pool.query('SELECT job_id FROM bids WHERE id = $1', [bidId]);
+    const jobId = bidResult.rows[0].job_id;
+
+    await pool.query('UPDATE jobs SET status = $1 WHERE id = $2', ['assigned', jobId]);
+
+    res.status(200).json({ message: 'Bid accepted and job assigned!' });
+  } catch (error) {
+    console.error('Error accepting bid:', error.message);
+    res.status(500).json({ error: 'Server error while accepting bid' });
   }
 });
 
