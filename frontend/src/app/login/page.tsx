@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link"; // Next.js built-in fast router!
+import Link from "next/link"; 
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -23,11 +23,8 @@ export default function LoginPage() {
         localStorage.setItem("userId", data.user.id);
         localStorage.setItem("userRole", data.user.role);
         
-        if (data.user.role === "driver" || data.user.role === "provider") {
-          window.location.href = "/jobs"; 
-        } else {
-          window.location.href = "/dashboard"; 
-        }
+        
+        window.location.href = "/dashboard"; 
       } else {
         alert(data.error || "Login failed");
       }
@@ -41,17 +38,11 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8 bg-white p-10 rounded-xl shadow-lg border border-gray-100">
         
-        {/* Header */}
         <div className="text-center">
-          <h2 className="text-3xl font-extrabold text-gray-900">
-            Welcome back
-          </h2>
-          <p className="mt-2 text-sm text-gray-600">
-            Securely log in to your LogiMatch account
-          </p>
+          <h2 className="text-3xl font-extrabold text-gray-900">Welcome back</h2>
+          <p className="mt-2 text-sm text-gray-600">Securely log in to your LogiMatch account</p>
         </div>
 
-        {/* Form */}
         <form className="mt-8 space-y-6" onSubmit={handleLogin}>
           <div className="space-y-4">
             <div>
@@ -62,7 +53,7 @@ export default function LoginPage() {
                 value={email} 
                 onChange={(e) => setEmail(e.target.value)} 
                 required 
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg text-black placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
               />
             </div>
             <div>
@@ -73,20 +64,16 @@ export default function LoginPage() {
                 value={password} 
                 onChange={(e) => setPassword(e.target.value)} 
                 required 
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg text-black placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
               />
             </div>
           </div>
 
-          <button 
-            type="submit" 
-            className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-          >
+          <button type="submit" className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
             Log In
           </button>
         </form>
 
-        {/* Footer Link */}
         <div className="text-center mt-6">
           <p className="text-sm text-gray-600">
             Don't have an account?{" "}
@@ -95,7 +82,6 @@ export default function LoginPage() {
             </Link>
           </p>
         </div>
-
       </div>
     </div>
   );

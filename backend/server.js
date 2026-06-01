@@ -113,11 +113,32 @@ app.post('/api/jobs', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Get All Open Jobs (PUBLIC)
+// Route: Get All Open Jobs (With Bids for Auction View)
 // ---------------------------------
 app.get('/api/jobs', async (req, res) => {
   try {
-    const allJobs = await pool.query("SELECT * FROM jobs WHERE status = 'open' ORDER BY id DESC");
+    // This query stitches the jobs to their bids and orders the bids from lowest amount to highest
+    const query = `
+      SELECT 
+        j.id, j.seeker_id, j.origin, j.destination, j.weight_kg, j.status,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'bid_id', b.id,
+              'provider_id', b.provider_id,
+              'amount', b.amount,
+              'provider_name', u.name
+            ) ORDER BY b.amount ASC
+          ) FILTER (WHERE b.id IS NOT NULL), '[]'
+        ) AS bids
+      FROM jobs j
+      LEFT JOIN bids b ON j.id = b.job_id
+      LEFT JOIN users u ON b.provider_id = u.id
+      WHERE j.status = 'open'
+      GROUP BY j.id
+      ORDER BY j.id DESC;
+    `;
+    const allJobs = await pool.query(query);
     res.status(200).json(allJobs.rows);
   } catch (error) {
     console.error('Error fetching jobs:', error.message);
@@ -185,6 +206,103 @@ app.put('/api/bids/:id/accept', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Error accepting bid:', error.message);
     res.status(500).json({ error: 'Server error while accepting bid' });
+  }
+});
+
+// ---------------------------------
+// Route: Get Current User Profile
+// ---------------------------------
+app.get('/api/users/me', verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT name, email, role FROM users WHERE id = $1', [req.user.id]);
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error fetching profile' });
+  }
+});
+
+// ---------------------------------
+// Route: Change Password
+// ---------------------------------
+app.put('/api/users/password', verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    // 1. Get the user's current hashed password from the database
+    const userResult = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    const user = userResult.rows[0];
+
+    // 2. Check if the current password they typed matches
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Incorrect current password' });
+    }
+
+    // 3. Hash the new password and update the database
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedNewPassword, req.user.id]);
+
+    res.status(200).json({ message: 'Password updated successfully!' });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error updating password' });
+  }
+});
+
+// ---------------------------------
+// Route: Jobs I Posted (With Bidder Details)
+// ---------------------------------
+app.get('/api/profile/my-jobs', verifyToken, async (req, res) => {
+  try {
+    // This query uses json_agg to bundle all the bids and bidder details directly into the job object!
+    const query = `
+      SELECT 
+        j.id, j.origin, j.destination, j.weight_kg, j.status,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'bid_id', b.id,
+              'amount', b.amount,
+              'status', b.status,
+              'provider_name', u.name,
+              'provider_email', u.email
+            )
+          ) FILTER (WHERE b.id IS NOT NULL), '[]'
+        ) AS bids
+      FROM jobs j
+      LEFT JOIN bids b ON j.id = b.job_id
+      LEFT JOIN users u ON b.provider_id = u.id
+      WHERE j.seeker_id = $1
+      GROUP BY j.id
+      ORDER BY j.id DESC;
+    `;
+    const result = await pool.query(query, [req.user.id]);
+    res.status(200).json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error fetching your jobs' });
+  }
+});
+
+// ---------------------------------
+// Route: Jobs I Won (For Drivers)
+// ---------------------------------
+app.get('/api/profile/won-jobs', verifyToken, async (req, res) => {
+  try {
+    // This query stitches the accepted bid to the job, and gets the Seeker's contact info
+    const query = `
+      SELECT 
+        j.id AS job_id, j.origin, j.destination, j.weight_kg,
+        b.amount AS winning_bid,
+        u.name AS seeker_name, u.email AS seeker_email
+      FROM jobs j
+      JOIN bids b ON j.id = b.job_id
+      JOIN users u ON j.seeker_id = u.id
+      WHERE b.provider_id = $1 AND b.status = 'accepted'
+      ORDER BY j.id DESC;
+    `;
+    const result = await pool.query(query, [req.user.id]);
+    res.status(200).json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error fetching won jobs' });
   }
 });
 
