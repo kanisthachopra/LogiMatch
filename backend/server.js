@@ -3,6 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('./db'); 
+const haversine = require('haversine'); // NEW: Added for distance calculation
 require('dotenv').config();
 
 const app = express();
@@ -117,7 +118,6 @@ app.post('/api/jobs', verifyToken, async (req, res) => {
 // ---------------------------------
 app.get('/api/jobs', async (req, res) => {
   try {
-    // This query stitches the jobs to their bids and orders the bids from lowest amount to highest
     const query = `
       SELECT 
         j.id, j.seeker_id, j.origin, j.destination, j.weight_kg, j.status,
@@ -151,7 +151,7 @@ app.get('/api/jobs', async (req, res) => {
 // ---------------------------------
 app.get('/api/seeker/bids', verifyToken, async (req, res) => {
   try {
-    const seekerId = req.user.id; // Pulled securely from the token
+    const seekerId = req.user.id; 
     
     const query = `
       SELECT jobs.origin, jobs.destination, jobs.weight_kg, bids.amount, bids.status, bids.id AS bid_id
@@ -174,7 +174,7 @@ app.get('/api/seeker/bids', verifyToken, async (req, res) => {
 app.post('/api/bids', verifyToken, async (req, res) => {
   try {
     const { job_id, amount } = req.body;
-    const provider_id = req.user.id; // Pulled securely from the token
+    const provider_id = req.user.id; 
 
     const newBid = await pool.query(
       'INSERT INTO bids (job_id, provider_id, amount) VALUES ($1, $2, $3) RETURNING *',
@@ -228,17 +228,14 @@ app.put('/api/users/password', verifyToken, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     
-    // 1. Get the user's current hashed password from the database
     const userResult = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
     const user = userResult.rows[0];
 
-    // 2. Check if the current password they typed matches
     const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
     if (!isMatch) {
       return res.status(401).json({ error: 'Incorrect current password' });
     }
 
-    // 3. Hash the new password and update the database
     const hashedNewPassword = await bcrypt.hash(newPassword, 10);
     await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedNewPassword, req.user.id]);
 
@@ -253,7 +250,6 @@ app.put('/api/users/password', verifyToken, async (req, res) => {
 // ---------------------------------
 app.get('/api/profile/my-jobs', verifyToken, async (req, res) => {
   try {
-    // This query uses json_agg to bundle all the bids and bidder details directly into the job object!
     const query = `
       SELECT 
         j.id, j.origin, j.destination, j.weight_kg, j.status,
@@ -287,7 +283,6 @@ app.get('/api/profile/my-jobs', verifyToken, async (req, res) => {
 // ---------------------------------
 app.get('/api/profile/won-jobs', verifyToken, async (req, res) => {
   try {
-    // This query stitches the accepted bid to the job, and gets the Seeker's contact info
     const query = `
       SELECT 
         j.id AS job_id, j.origin, j.destination, j.weight_kg,
@@ -303,6 +298,55 @@ app.get('/api/profile/won-jobs', verifyToken, async (req, res) => {
     res.status(200).json(result.rows);
   } catch (error) {
     res.status(500).json({ error: 'Server error fetching won jobs' });
+  }
+});
+
+// ---------------------------------
+// Route: Price Recommendation Engine 
+// ---------------------------------
+app.post('/api/price-estimate', async (req, res) => {
+  try {
+    const { originCity, destCity, weight } = req.body;
+
+    // Helper function to fetch coordinates
+    const getCoords = async (city) => {
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${city}&format=json`, {
+        method: "GET",
+        headers: { "User-Agent": "LogiMatch/1.0" }
+      });
+      const data = await response.json();
+      
+      if (!data || data.length === 0) {
+        throw new Error(`Location not found: ${city}`);
+      }
+      
+      // Nominatim returns string values, haversine needs numbers
+      return { 
+        latitude: parseFloat(data[0].lat), 
+        longitude: parseFloat(data[0].lon) 
+      };
+    };
+
+    // 1. Geocoding 📍
+    const originCoords = await getCoords(originCity);
+    const destCoords = await getCoords(destCity);
+
+    // 2. Distance 📏
+    const distanceInKm = haversine(originCoords, destCoords, { unit: 'km' });
+
+    // 3. Pricing 🧮
+    const baseRate = 2; // ₹2 per kg per km
+    const recommendedPrice = Math.round(baseRate * distanceInKm * weight);
+
+    // 4. Send it back
+    res.status(200).json({ 
+      distance: Math.round(distanceInKm),
+      price: recommendedPrice 
+    });
+
+  } catch (error) {
+    console.error('Error calculating price:', error.message);
+    res.status(500).json({ error: 'Failed to calculate price estimate' });
   }
 });
 
