@@ -2,9 +2,10 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 
-// --- 1. THE JOB CARD COMPONENT  ---
+// --- 1. THE JOB CARD COMPONENT ---
 function JobCard({ job, currentUserId }: { job: any, currentUserId: string | null }) {
   const [bidAmount, setBidAmount] = useState("");
+  const [showSeekerProfile, setShowSeekerProfile] = useState(false);
 
   const handleBidSubmit = async () => {
     try {
@@ -39,10 +40,19 @@ function JobCard({ job, currentUserId }: { job: any, currentUserId: string | nul
   const isMyJob = currentUserId === String(job.seeker_id);
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow relative">
+      
+      {/* Seeker Details Toggle Button */}
+      <button 
+        onClick={() => setShowSeekerProfile(!showSeekerProfile)}
+        className="absolute top-6 right-6 text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full hover:bg-blue-100 transition-colors"
+      >
+        {showSeekerProfile ? "Hide Seeker Details" : "View Seeker Details"}
+      </button>
+
       <div className="flex justify-between items-start border-b border-gray-100 pb-4 mb-4">
         <div>
-          <h3 className="text-xl font-bold text-gray-900 flex items-center gap-3">
+          <h3 className="text-xl font-bold text-gray-900 flex items-center gap-3 pr-32">
             {job.origin} <span className="text-gray-400 text-sm">➔</span> {job.destination}
           </h3>
           <div className="mt-2 flex gap-2 text-sm">
@@ -54,10 +64,24 @@ function JobCard({ job, currentUserId }: { job: any, currentUserId: string | nul
             </span>
           </div>
         </div>
-        <div className="text-right text-xs text-gray-400">
-          <span>Job #{job.id}</span>
-        </div>
       </div>
+      
+      {/* Expanded Seeker Profile View */}
+      {showSeekerProfile && (
+        <div className="mb-5 p-4 bg-gray-50 rounded-lg border border-gray-200 flex gap-4 items-center animate-fade-in">
+          <div className="w-14 h-14 rounded-full bg-gray-300 flex-shrink-0 overflow-hidden border-2 border-white shadow-sm">
+             {job.seeker_photo ? (
+               <img src={job.seeker_photo} alt="Seeker Avatar" className="w-full h-full object-cover"/>
+             ) : (
+               <span className="flex items-center justify-center w-full h-full text-2xl">👤</span>
+             )}
+          </div>
+          <div>
+            <p className="font-bold text-gray-900 text-lg">{job.seeker_name || "Verified Cargo Seeker"}</p>
+            <p className="text-sm text-gray-600 mt-1">{job.seeker_bio || "This user hasn't added a bio yet."}</p>
+          </div>
+        </div>
+      )}
       
       {/* 🏆 THE LIVE AUCTION BOARD */}
       <div className="mb-5 bg-gray-50 rounded-lg p-4 border border-gray-100">
@@ -69,8 +93,16 @@ function JobCard({ job, currentUserId }: { job: any, currentUserId: string | nul
             {job.bids.map((bid: any, index: number) => {
               const isMyBid = Number(currentUserId) === bid.provider_id;
               return (
-                <div key={bid.bid_id} className={`flex justify-between items-center text-sm p-2 rounded-md ${isMyBid ? 'bg-blue-100 border border-blue-200' : 'bg-white border border-gray-200'}`}>
-                  <span className="font-medium text-gray-800">
+                <div key={bid.bid_id} className={`flex items-center text-sm p-2 rounded-md ${isMyBid ? 'bg-blue-100 border border-blue-200' : 'bg-white border border-gray-200'}`}>
+                  {/* Bidder Avatar */}
+                  <div className="w-6 h-6 rounded-full bg-gray-200 mr-3 overflow-hidden flex-shrink-0">
+                    {bid.provider_photo ? (
+                      <img src={bid.provider_photo} alt="Provider" className="w-full h-full object-cover"/>
+                    ) : (
+                      <span className="flex items-center justify-center w-full h-full text-xs">👤</span>
+                    )}
+                  </div>
+                  <span className="font-medium text-gray-800 flex-grow">
                     {index === 0 ? '🏆 ' : ''}{bid.provider_name} {isMyBid && <span className="text-blue-600 font-bold">(You)</span>}
                   </span>
                   <span className={`font-bold ${index === 0 ? 'text-green-600' : 'text-gray-600'}`}>
@@ -85,7 +117,7 @@ function JobCard({ job, currentUserId }: { job: any, currentUserId: string | nul
 
       {isMyJob ? (
         <div className="text-center py-2 bg-gray-100 rounded-lg text-gray-500 text-sm font-medium border border-gray-200">
-          This is your cargo. Check your Profile to manage bids.
+          This is your cargo. Check your History to manage bids.
         </div>
       ) : (
         <div className="flex gap-3 items-center">
@@ -116,8 +148,13 @@ function JobCard({ job, currentUserId }: { job: any, currentUserId: string | nul
 // --- 2. THE MAIN UNIFIED PAGE ---
 export default function UnifiedDashboardPage() {
   const [jobs, setJobs] = useState([]);
+  const [myHistory, setMyHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  // Modals Controls
+  const [isPostModalOpen, setIsPostModalOpen] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
 
   // Form States
   const [origin, setOrigin] = useState("");
@@ -137,20 +174,31 @@ export default function UnifiedDashboardPage() {
   // Initial Data Fetch
   useEffect(() => {
     setCurrentUserId(localStorage.getItem("userId"));
-    const fetchJobs = async () => {
+    const fetchData = async () => {
       try {
-        const response = await fetch("http://localhost:5000/api/jobs");
-        if (response.ok) {
-          const data = await response.json();
-          setJobs(data);
+        const token = localStorage.getItem("token");
+        const headers = token ? { "Authorization": `Bearer ${token}` } : undefined;
+        
+        // 1. Fetch Open Market Jobs
+        const jobsRes = await fetch("http://localhost:5000/api/jobs");
+        if (jobsRes.ok) {
+          setJobs(await jobsRes.json());
+        }
+
+        // 2. Fetch User's Job History (if logged in)
+        if (token) {
+          const historyRes = await fetch("http://localhost:5000/api/profile/my-jobs", { headers });
+          if (historyRes.ok) {
+            setMyHistory(await historyRes.json());
+          }
         }
       } catch (error) {
-        console.error("Failed to fetch jobs:", error);
+        console.error("Failed to fetch data:", error);
       } finally {
         setIsLoading(false);
       }
     };
-    fetchJobs();
+    fetchData();
   }, []);
 
   // 🗺️ Debounced Fetch for Origin
@@ -189,9 +237,8 @@ export default function UnifiedDashboardPage() {
     return () => clearTimeout(delayDebounce);
   }, [destination, isTypingDest]);
 
-  // Handlers for selecting a city from the dropdown
   const handleOriginSelect = (cityName: string) => {
-    setOrigin(cityName.split(",")[0]); // Just keep the main city name
+    setOrigin(cityName.split(",")[0]); 
     setIsTypingOrigin(false);
     setOriginSuggestions([]);
   };
@@ -213,11 +260,7 @@ export default function UnifiedDashboardPage() {
       const response = await fetch('http://localhost:5000/api/price-estimate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          originCity: origin, 
-          destCity: destination, 
-          weight: Number(weight) 
-        })
+        body: JSON.stringify({ originCity: origin, destCity: destination, weight: Number(weight) })
       });
       const data = await response.json();
       
@@ -248,8 +291,6 @@ export default function UnifiedDashboardPage() {
 
       if (response.ok) {
         alert(`Success! Cargo posted to the market.`);
-        setOrigin(""); setDestination(""); setWeight("");
-        setEstimatedPrice(null); setDistance(null);
         window.location.reload(); 
       } else {
         alert("Failed to post the shipment.");
@@ -259,142 +300,212 @@ export default function UnifiedDashboardPage() {
     }
   };
 
+  // ✅ Accept Bid Action for the History Modal
+  const handleAcceptBid = async (bidId: number) => {
+    if (!confirm("Are you sure you want to accept this bid? This will assign the job.")) return;
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`http://localhost:5000/api/bids/${bidId}/accept`, {
+        method: "PUT",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (response.ok) {
+        alert("Bid accepted successfully!");
+        window.location.reload(); 
+      } else {
+        alert("Failed to accept the bid.");
+      }
+    } catch (error) {
+      console.error("Connection error:", error);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
+      
+      {/* TOP NAVIGATION */}
       <nav className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <h1 className="text-2xl font-extrabold text-blue-600 tracking-tight">LogiMatch</h1>
+          <div className="flex items-center gap-6">
+            <h1 className="text-2xl font-extrabold text-blue-600 tracking-tight">LogiMatch</h1>
+            
+            {/* New Header Actions */}
+            <div className="flex gap-3 ml-4 border-l pl-6 border-gray-200">
+              <button 
+                onClick={() => setIsPostModalOpen(true)} 
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors text-sm"
+              >
+                <span>➕</span> Post a Job
+              </button>
+              <button 
+                onClick={() => setIsHistoryModalOpen(true)} 
+                className="flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 font-bold py-2 px-4 rounded-lg border border-gray-300 transition-colors text-sm"
+              >
+                <span>📜</span> Job History
+              </button>
+            </div>
+          </div>
+          
           <Link href="/profile" className="flex items-center gap-2 text-gray-600 hover:text-black transition-colors cursor-pointer bg-gray-100 px-4 py-2 rounded-full font-medium">
             <span className="text-lg">👤</span> My Profile
           </Link>
         </div>
       </nav>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          <div className="lg:col-span-2">
-            <h2 className="text-2xl font-bold text-gray-900 mb-6">Open Market</h2>
-            <div className="flex flex-col gap-5">
-              {isLoading ? (
-                <p className="text-gray-500 font-medium animate-pulse">Loading market data...</p>
-              ) : jobs.length === 0 ? (
-                <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-                  <p className="text-gray-500">No open jobs on the market right now.</p>
-                </div>
+      {/* MAIN OPEN MARKET */}
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <h2 className="text-2xl font-bold text-gray-900 mb-6">Live Open Market</h2>
+        <div className="flex flex-col gap-5">
+          {isLoading ? (
+            <p className="text-gray-500 font-medium animate-pulse">Loading market data...</p>
+          ) : jobs.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+              <p className="text-gray-500">No open jobs on the market right now.</p>
+            </div>
+          ) : (
+            jobs.map((job: any) => (
+              <JobCard key={job.id} job={job} currentUserId={currentUserId} />
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* --------------------------------- */}
+      {/* MODAL 1: POST A NEW SHIPMENT      */}
+      {/* --------------------------------- */}
+      {isPostModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6 border-b pb-3">
+              <h3 className="text-xl font-bold text-gray-900">Post a New Shipment</h3>
+              <button onClick={() => setIsPostModalOpen(false)} className="text-gray-400 hover:text-red-500 font-bold text-2xl">&times;</button>
+            </div>
+            
+            <form onSubmit={handlePostJob} className="space-y-4">
+              <div className="relative">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Origin City</label>
+                <input 
+                  type="text" 
+                  placeholder="e.g., Mumbai" 
+                  value={origin} 
+                  onChange={(e) => { setOrigin(e.target.value); setIsTypingOrigin(true); }} 
+                  required 
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md text-black focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                {originSuggestions.length > 0 && (
+                  <ul className="absolute z-20 w-full bg-white border border-gray-200 rounded-md shadow-lg mt-1 max-h-48 overflow-y-auto">
+                    {originSuggestions.map((city: any, i: number) => (
+                      <li key={i} onClick={() => handleOriginSelect(city.display_name)} className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm border-b last:border-0">{city.display_name}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="relative">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Destination City</label>
+                <input 
+                  type="text" 
+                  placeholder="e.g., Delhi" 
+                  value={destination} 
+                  onChange={(e) => { setDestination(e.target.value); setIsTypingDest(true); }} 
+                  required 
+                  className="w-full px-4 py-2 border border-gray-300 rounded-md text-black focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                {destSuggestions.length > 0 && (
+                  <ul className="absolute z-20 w-full bg-white border border-gray-200 rounded-md shadow-lg mt-1 max-h-48 overflow-y-auto">
+                    {destSuggestions.map((city: any, i: number) => (
+                      <li key={i} onClick={() => handleDestSelect(city.display_name)} className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm border-b last:border-0">{city.display_name}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Weight (KG)</label>
+                <input type="number" placeholder="e.g., 500" value={weight} onChange={(e) => setWeight(e.target.value)} required className="w-full px-4 py-2 border border-gray-300 rounded-md text-black focus:ring-2 focus:ring-blue-500 outline-none" />
+              </div>
+
+              <div className="pt-2">
+                {estimatedPrice ? (
+                  <div className="bg-green-50 border border-green-200 p-4 rounded-lg text-center mb-2">
+                    <p className="text-sm text-green-700 font-medium mb-1">Distance: {distance} km</p>
+                    <h4 className="text-xl font-bold text-green-800">Recommended: ₹{estimatedPrice}</h4>
+                  </div>
+                ) : (
+                  <button onClick={handleCalculatePrice} className="w-full mb-2 bg-gray-100 text-gray-700 font-bold py-2 px-4 rounded-md hover:bg-gray-200 transition-colors border border-gray-300">
+                    Calculate Fair Price
+                  </button>
+                )}
+              </div>
+
+              <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-md hover:bg-blue-700 transition-colors shadow-sm">
+                Post Job to Market
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --------------------------------- */}
+      {/* MODAL 2: JOB HISTORY              */}
+      {/* --------------------------------- */}
+      {isHistoryModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+            <div className="p-6 border-b flex justify-between items-center bg-gray-50 rounded-t-xl">
+              <h3 className="text-xl font-bold text-gray-900">My Job Posting History</h3>
+              <button onClick={() => setIsHistoryModalOpen(false)} className="text-gray-400 hover:text-red-500 font-bold text-2xl">&times;</button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-grow space-y-6">
+              {myHistory.length === 0 ? (
+                <p className="text-center text-gray-500 py-8">You haven't posted any jobs yet.</p>
               ) : (
-                jobs.map((job: any) => (
-                  <JobCard key={job.id} job={job} currentUserId={currentUserId} />
+                myHistory.map((job: any) => (
+                  <div key={job.id} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                    <div className="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                      <div>
+                        <h4 className="font-bold text-lg text-gray-900">{job.origin} ➔ {job.destination}</h4>
+                        <p className="text-xs text-gray-500">Weight: {job.weight_kg}kg</p>
+                      </div>
+                      <span className={`text-xs font-bold px-2 py-1 rounded uppercase ${job.status === 'open' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
+                        {job.status}
+                      </span>
+                    </div>
+                    
+                    <div className="p-4">
+                      <h5 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Bids Received ({job.bids.length})</h5>
+                      {job.bids.length === 0 ? (
+                        <p className="text-sm text-gray-400 italic">No bids yet.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {job.bids.map((bid: any) => (
+                            <div key={bid.bid_id} className={`flex justify-between items-center p-3 rounded-lg border ${bid.status === 'accepted' ? 'bg-green-50 border-green-200' : 'bg-white border-gray-100'}`}>
+                              <div>
+                                <p className="font-bold text-gray-900 text-sm">{bid.provider_name}</p>
+                                <p className="text-xs text-gray-500">{bid.provider_email}</p>
+                              </div>
+                              <div className="flex items-center gap-4">
+                                <span className="text-lg font-extrabold text-green-600">₹{bid.amount}</span>
+                                {job.status === 'open' && (
+                                  <button onClick={() => handleAcceptBid(bid.bid_id)} className="bg-green-600 text-white text-xs px-3 py-1.5 rounded font-bold hover:bg-green-700">Accept</button>
+                                )}
+                                {bid.status === 'accepted' && (
+                                  <span className="bg-green-200 text-green-800 text-xs font-bold px-2 py-1 rounded">WINNER</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 ))
               )}
             </div>
           </div>
-
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-visible sticky top-24">
-              <div className="px-6 py-6">
-                <h3 className="text-xl font-bold text-gray-800 mb-6 border-b pb-2">Post a New Shipment</h3>
-                <form onSubmit={handlePostJob} className="space-y-4">
-                  
-                  {/* Origin Input */}
-                  <div className="relative">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Origin City</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g., Mumbai" 
-                      value={origin} 
-                      onChange={(e) => {
-                        setOrigin(e.target.value);
-                        setIsTypingOrigin(true);
-                      }} 
-                      required 
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md text-black placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                    {originSuggestions.length > 0 && (
-                      <ul className="absolute z-20 w-full bg-white border border-gray-200 rounded-md shadow-lg mt-1 max-h-48 overflow-y-auto">
-                        {originSuggestions.map((city: any, i: number) => (
-                          <li 
-                            key={i} 
-                            onClick={() => handleOriginSelect(city.display_name)}
-                            className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm text-gray-700 border-b last:border-0"
-                          >
-                            {city.display_name}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  {/* Destination Input */}
-                  <div className="relative">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Destination City</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g., Delhi" 
-                      value={destination} 
-                      onChange={(e) => {
-                        setDestination(e.target.value);
-                        setIsTypingDest(true);
-                      }} 
-                      required 
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md text-black placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                    {destSuggestions.length > 0 && (
-                      <ul className="absolute z-20 w-full bg-white border border-gray-200 rounded-md shadow-lg mt-1 max-h-48 overflow-y-auto">
-                        {destSuggestions.map((city: any, i: number) => (
-                          <li 
-                            key={i} 
-                            onClick={() => handleDestSelect(city.display_name)}
-                            className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm text-gray-700 border-b last:border-0"
-                          >
-                            {city.display_name}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  {/* Weight Input */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Weight (KG)</label>
-                    <input 
-                      type="number" 
-                      placeholder="e.g., 500" 
-                      value={weight} 
-                      onChange={(e) => setWeight(e.target.value)} 
-                      required 
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md text-black placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
-                    />
-                  </div>
-
-                  {/* Pricing Display */}
-                  <div className="pt-2">
-                    {estimatedPrice ? (
-                      <div className="bg-green-50 border border-green-200 p-4 rounded-lg text-center">
-                        <p className="text-sm text-green-700 font-medium mb-1">Distance: {distance} km</p>
-                        <h4 className="text-xl font-bold text-green-800">Recommended: ₹{estimatedPrice}</h4>
-                      </div>
-                    ) : (
-                      <button 
-                        onClick={handleCalculatePrice} 
-                        className="w-full bg-gray-100 text-gray-700 font-bold py-2 px-4 rounded-md hover:bg-gray-200 transition-colors border border-gray-300"
-                      >
-                        Calculate Fair Price
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Submit Button */}
-                  <button type="submit" className="w-full mt-2 bg-blue-600 text-white font-bold py-3 px-4 rounded-md hover:bg-blue-700 transition-colors shadow-sm">
-                    Post Job to Market
-                  </button>
-                </form>
-              </div>
-            </div>
-          </div>
-
         </div>
-      </div>
+      )}
     </div>
   );
 }

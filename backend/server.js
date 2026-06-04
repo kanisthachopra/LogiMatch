@@ -3,7 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('./db'); 
-const haversine = require('haversine'); // NEW: Added for distance calculation
+const haversine = require('haversine'); // For distance calculation
 require('dotenv').config();
 
 const app = express();
@@ -114,28 +114,33 @@ app.post('/api/jobs', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Get All Open Jobs (With Bids for Auction View)
+// Route: Get All Open Jobs (UPDATED: With Rich Profiles)
 // ---------------------------------
 app.get('/api/jobs', async (req, res) => {
   try {
     const query = `
       SELECT 
         j.id, j.seeker_id, j.origin, j.destination, j.weight_kg, j.status,
+        u_seeker.name AS seeker_name,
+        u_seeker.profile_photo AS seeker_photo,
+        u_seeker.bio AS seeker_bio,
         COALESCE(
           json_agg(
             json_build_object(
               'bid_id', b.id,
               'provider_id', b.provider_id,
               'amount', b.amount,
-              'provider_name', u.name
+              'provider_name', u_provider.name,
+              'provider_photo', u_provider.profile_photo
             ) ORDER BY b.amount ASC
           ) FILTER (WHERE b.id IS NOT NULL), '[]'
         ) AS bids
       FROM jobs j
+      JOIN users u_seeker ON j.seeker_id = u_seeker.id
       LEFT JOIN bids b ON j.id = b.job_id
-      LEFT JOIN users u ON b.provider_id = u.id
+      LEFT JOIN users u_provider ON b.provider_id = u_provider.id
       WHERE j.status = 'open'
-      GROUP BY j.id
+      GROUP BY j.id, u_seeker.name, u_seeker.profile_photo, u_seeker.bio
       ORDER BY j.id DESC;
     `;
     const allJobs = await pool.query(query);
@@ -210,14 +215,59 @@ app.put('/api/bids/:id/accept', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Get Current User Profile
+// Route: Get Current User Profile (UPDATED: Added profile details)
 // ---------------------------------
 app.get('/api/users/me', verifyToken, async (req, res) => {
   try {
-    const result = await pool.query('SELECT name, email, role FROM users WHERE id = $1', [req.user.id]);
+    const query = `
+      SELECT name, email, role, profile_photo, banner_photo, bio, license_file_url, is_public 
+      FROM users 
+      WHERE id = $1
+    `;
+    const result = await pool.query(query, [req.user.id]);
     res.status(200).json(result.rows[0]);
   } catch (error) {
     res.status(500).json({ error: 'Server error fetching profile' });
+  }
+});
+
+// ---------------------------------
+// Route: Update User Profile (Phase 2)
+// ---------------------------------
+app.put('/api/users/profile', verifyToken, async (req, res) => {
+  try {
+    const { bio, is_public, profile_photo, banner_photo, license_file_url } = req.body;
+    const userId = req.user.id; 
+
+    const updateQuery = `
+      UPDATE users 
+      SET 
+        bio = $1, 
+        is_public = $2, 
+        profile_photo = $3, 
+        banner_photo = $4, 
+        license_file_url = $5
+      WHERE id = $6
+      RETURNING id, name, email, role, bio, is_public, profile_photo, banner_photo, license_file_url;
+    `;
+
+    const updatedUser = await pool.query(updateQuery, [
+      bio, 
+      is_public, 
+      profile_photo, 
+      banner_photo, 
+      license_file_url, 
+      userId
+    ]);
+
+    res.status(200).json({
+      message: "Profile updated successfully!",
+      profile: updatedUser.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Error updating profile:", error.message);
+    res.status(500).json({ error: "Server error while updating profile." });
   }
 });
 
@@ -308,7 +358,6 @@ app.post('/api/price-estimate', async (req, res) => {
   try {
     const { originCity, destCity, weight } = req.body;
 
-    // Helper function to fetch coordinates
     const getCoords = async (city) => {
       const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${city}&format=json`, {
         method: "GET",
@@ -320,25 +369,18 @@ app.post('/api/price-estimate', async (req, res) => {
         throw new Error(`Location not found: ${city}`);
       }
       
-      // Nominatim returns string values, haversine needs numbers
       return { 
         latitude: parseFloat(data[0].lat), 
         longitude: parseFloat(data[0].lon) 
       };
     };
 
-    // 1. Geocoding 📍
     const originCoords = await getCoords(originCity);
     const destCoords = await getCoords(destCity);
-
-    // 2. Distance 📏
     const distanceInKm = haversine(originCoords, destCoords, { unit: 'km' });
-
-    // 3. Pricing 🧮
     const baseRate = 2; // ₹2 per kg per km
     const recommendedPrice = Math.round(baseRate * distanceInKm * weight);
 
-    // 4. Send it back
     res.status(200).json({ 
       distance: Math.round(distanceInKm),
       price: recommendedPrice 
