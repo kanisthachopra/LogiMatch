@@ -94,17 +94,45 @@ app.post('/api/users/login', async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Post a New Job Request (SECURED)
+// Route: Post a New Job Request (UPDATED: For Professional Manifest Details)
 // ---------------------------------
 app.post('/api/jobs', verifyToken, async (req, res) => {
   try {
-    const { origin, destination, weight_kg } = req.body;
+    const { 
+      origin, destination, weight_kg,
+      length_cm, width_cm, height_cm,
+      packaging_type, is_fragile, is_hazmat, requires_refrigeration,
+      pickup_window_start, pickup_window_end,
+      delivery_window_start, delivery_window_end,
+      requires_liftgate, requires_loading_dock,
+      special_instructions
+    } = req.body;
+    
     const seeker_id = req.user.id; // Pulled securely from the token
 
-    const newJob = await pool.query(
-      'INSERT INTO jobs (seeker_id, origin, destination, weight_kg) VALUES ($1, $2, $3, $4) RETURNING *',
-      [seeker_id, origin, destination, weight_kg]
-    );
+    const insertQuery = `
+      INSERT INTO jobs (
+        seeker_id, origin, destination, weight_kg,
+        length_cm, width_cm, height_cm,
+        packaging_type, is_fragile, is_hazmat, requires_refrigeration,
+        pickup_window_start, pickup_window_end,
+        delivery_window_start, delivery_window_end,
+        requires_liftgate, requires_loading_dock,
+        special_instructions
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+      ) RETURNING *;
+    `;
+
+    const newJob = await pool.query(insertQuery, [
+      seeker_id, origin, destination, weight_kg,
+      length_cm, width_cm, height_cm,
+      packaging_type, is_fragile || false, is_hazmat || false, requires_refrigeration || false,
+      pickup_window_start, pickup_window_end,
+      delivery_window_start, delivery_window_end,
+      requires_liftgate || false, requires_loading_dock || false,
+      special_instructions
+    ]);
 
     res.status(201).json(newJob.rows[0]);
   } catch (error) {
@@ -114,13 +142,19 @@ app.post('/api/jobs', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Get All Open Jobs (UPDATED: With Rich Profiles)
+// Route: Get All Open Jobs (UPDATED: Returning Rich Manifest Data)
 // ---------------------------------
 app.get('/api/jobs', async (req, res) => {
   try {
     const query = `
       SELECT 
         j.id, j.seeker_id, j.origin, j.destination, j.weight_kg, j.status,
+        j.length_cm, j.width_cm, j.height_cm, j.packaging_type,
+        j.is_fragile, j.is_hazmat, j.requires_refrigeration,
+        j.pickup_window_start, j.pickup_window_end,
+        j.delivery_window_start, j.delivery_window_end,
+        j.requires_liftgate, j.requires_loading_dock,
+        j.special_instructions,
         u_seeker.name AS seeker_name,
         u_seeker.profile_photo AS seeker_photo,
         u_seeker.bio AS seeker_bio,
@@ -215,7 +249,7 @@ app.put('/api/bids/:id/accept', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Get Current User Profile (UPDATED: Added profile details)
+// Route: Get Current User Profile 
 // ---------------------------------
 app.get('/api/users/me', verifyToken, async (req, res) => {
   try {
@@ -232,7 +266,7 @@ app.get('/api/users/me', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Update User Profile (Phase 2)
+// Route: Update User Profile 
 // ---------------------------------
 app.put('/api/users/profile', verifyToken, async (req, res) => {
   try {
@@ -296,13 +330,19 @@ app.put('/api/users/password', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Jobs I Posted (With Bidder Details)
+// Route: Jobs I Posted (UPDATED: Returning full manifest detail history)
 // ---------------------------------
 app.get('/api/profile/my-jobs', verifyToken, async (req, res) => {
   try {
     const query = `
       SELECT 
         j.id, j.origin, j.destination, j.weight_kg, j.status,
+        j.length_cm, j.width_cm, j.height_cm, j.packaging_type,
+        j.is_fragile, j.is_hazmat, j.requires_refrigeration,
+        j.pickup_window_start, j.pickup_window_end,
+        j.delivery_window_start, j.delivery_window_end,
+        j.requires_liftgate, j.requires_loading_dock,
+        j.special_instructions,
         COALESCE(
           json_agg(
             json_build_object(
@@ -329,13 +369,19 @@ app.get('/api/profile/my-jobs', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Jobs I Won (For Drivers)
+// Route: Jobs I Won (UPDATED: Passing full manifest instructions to driver)
 // ---------------------------------
 app.get('/api/profile/won-jobs', verifyToken, async (req, res) => {
   try {
     const query = `
       SELECT 
         j.id AS job_id, j.origin, j.destination, j.weight_kg,
+        j.length_cm, j.width_cm, j.height_cm, j.packaging_type,
+        j.is_fragile, j.is_hazmat, j.requires_refrigeration,
+        j.pickup_window_start, j.pickup_window_end,
+        j.delivery_window_start, j.delivery_window_end,
+        j.requires_liftgate, j.requires_loading_dock,
+        j.special_instructions,
         b.amount AS winning_bid,
         u.name AS seeker_name, u.email AS seeker_email
       FROM jobs j
