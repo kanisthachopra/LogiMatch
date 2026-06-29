@@ -3,18 +3,19 @@ import { useState } from "react";
 import Link from "next/link";
 
 export default function RegisterPage() {
-  // UI State: 'register' | 'verify'
   const [step, setStep] = useState("register");
 
   // Form States
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isProvider, setIsProvider] = useState(false);
+  const [isProvider, setIsProvider] = useState(false); // Tick box state
   const [otp, setOtp] = useState("");
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // ✨ STEP 4 LOGIC: We map the checkbox to the exact string role the DB expects
     const payload = {
       name: name,
       email: email,
@@ -33,7 +34,7 @@ export default function RegisterPage() {
 
       if (response.ok) {
         alert("Registration successful! We've sent a code to your email.");
-        setStep("verify"); // Move to OTP verification step
+        setStep("verify");
       } else {
         alert(data.error || "Uh oh, something went wrong.");
       }
@@ -46,11 +47,14 @@ export default function RegisterPage() {
   const handleVerifySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("http://localhost:5000/api/users/verify-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp }),
-      });
+      const response = await fetch(
+        "http://localhost:5000/api/users/verify-email",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, otp }),
+        },
+      );
 
       const data = await response.json();
 
@@ -69,17 +73,22 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8 text-gray-900">
       <div className="max-w-md w-full space-y-8 bg-white p-10 rounded-xl shadow-lg border border-gray-200">
-        
         {step === "register" && (
-          <>
+          <div className="animate-fade-in">
             <div className="text-center">
-              <h2 className="text-3xl font-extrabold text-gray-900">Join LogiMatch</h2>
-              <p className="mt-2 text-sm text-gray-600 font-medium">Create an account to connect with the logistics network</p>
+              <h2 className="text-3xl font-extrabold text-gray-900">
+                Join LogiMatch
+              </h2>
+              <p className="mt-2 text-sm text-gray-600 font-medium">
+                Create an account to connect with the logistics network
+              </p>
             </div>
 
             <form className="mt-8 space-y-5" onSubmit={handleRegisterSubmit}>
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1">Full Name</label>
+                <label className="block text-sm font-bold text-gray-800 mb-1">
+                  Full Name or Company Name
+                </label>
                 <input
                   type="text"
                   placeholder="e.g., Falguni Chopra"
@@ -91,7 +100,9 @@ export default function RegisterPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1">Email Address</label>
+                <label className="block text-sm font-bold text-gray-800 mb-1">
+                  Email Address
+                </label>
                 <input
                   type="email"
                   placeholder="you@example.com"
@@ -103,7 +114,9 @@ export default function RegisterPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1">Password</label>
+                <label className="block text-sm font-bold text-gray-800 mb-1">
+                  Password
+                </label>
                 <input
                   type="password"
                   placeholder="••••••••"
@@ -114,17 +127,29 @@ export default function RegisterPage() {
                 />
               </div>
 
-              <div className="flex items-center bg-gray-50 p-4 rounded-lg border border-gray-200 mt-2 select-none">
-                <input
-                  type="checkbox"
-                  id="role-checkbox"
-                  checked={isProvider}
-                  onChange={(e) => setIsProvider(e.target.checked)}
-                  className="h-5 w-5 accent-blue-600 cursor-pointer"
-                />
-                <label htmlFor="role-checkbox" className="ml-3 block text-sm font-bold text-gray-800 cursor-pointer">
-                  I am a Truck Driver (Provider)
-                </label>
+              {/* ⚡ STEP 4 TICK BOX: Driver vs Seeker */}
+              <div className="flex items-start bg-gray-50 p-4 rounded-lg border border-gray-200 mt-2 select-none hover:bg-gray-100 transition-colors">
+                <div className="flex items-center h-5">
+                  <input
+                    type="checkbox"
+                    id="role-checkbox"
+                    checked={isProvider}
+                    onChange={(e) => setIsProvider(e.target.checked)}
+                    className="h-5 w-5 accent-blue-600 cursor-pointer"
+                  />
+                </div>
+                <div className="ml-3 text-sm">
+                  <label
+                    htmlFor="role-checkbox"
+                    className="font-bold text-gray-900 cursor-pointer"
+                  >
+                    I am a Logistics Provider
+                  </label>
+                  <p className="text-gray-500 font-medium mt-0.5">
+                    Check this box if you are a truck driver or fleet owner
+                    looking to bid on jobs.
+                  </p>
+                </div>
               </div>
 
               <button
@@ -138,27 +163,35 @@ export default function RegisterPage() {
             <div className="text-center mt-6">
               <p className="text-sm text-gray-600 font-medium">
                 Already have an account?{" "}
-                <Link href="/login" className="font-bold text-blue-600 hover:text-blue-700 transition-colors">
+                <Link
+                  href="/login"
+                  className="font-bold text-blue-600 hover:text-blue-700 transition-colors"
+                >
                   Log in here
                 </Link>
               </p>
             </div>
-          </>
+          </div>
         )}
 
         {step === "verify" && (
           <div className="animate-fade-in">
             <div className="text-center">
               <span className="text-5xl mb-4 block">📬</span>
-              <h2 className="text-3xl font-extrabold text-gray-900">Check Your Email</h2>
+              <h2 className="text-3xl font-extrabold text-gray-900">
+                Check Your Email
+              </h2>
               <p className="mt-2 text-sm text-gray-600 font-medium">
-                We've sent a 6-digit verification code to <span className="font-bold text-gray-900">{email}</span>.
+                We've sent a 6-digit verification code to{" "}
+                <span className="font-bold text-gray-900">{email}</span>.
               </p>
             </div>
 
             <form className="mt-8 space-y-5" onSubmit={handleVerifySubmit}>
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1 text-center">Enter 6-Digit Code</label>
+                <label className="block text-sm font-bold text-gray-800 mb-1 text-center">
+                  Enter 6-Digit Code
+                </label>
                 <input
                   type="text"
                   placeholder="123456"
@@ -179,7 +212,6 @@ export default function RegisterPage() {
             </form>
           </div>
         )}
-
       </div>
     </div>
   );

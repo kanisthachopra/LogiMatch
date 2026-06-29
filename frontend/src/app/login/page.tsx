@@ -29,7 +29,9 @@ export default function LoginPage() {
         localStorage.setItem("userRole", data.user.role);
         window.location.href = "/dashboard";
       } else if (response.status === 403 && data.needsVerification) {
-        alert("Your email is not verified yet. Please check your inbox for the verification email.");
+        alert(
+          "Your email is not verified yet. Please check your inbox for the verification email.",
+        );
       } else {
         alert(data.error || "Login failed");
       }
@@ -42,15 +44,20 @@ export default function LoginPage() {
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("http://localhost:5000/api/users/forgot-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      
+      const response = await fetch(
+        "http://localhost:5000/api/users/forgot-password",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        },
+      );
+
       // We always move to the reset step to prevent email enumeration hacking
-      alert("If an account exists, a recovery code has been sent to that email.");
-      setStep("reset"); 
+      alert(
+        "If an account exists, a recovery code has been sent to that email.",
+      );
+      setStep("reset");
     } catch (error) {
       console.error("Connection error:", error);
     }
@@ -59,11 +66,14 @@ export default function LoginPage() {
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("http://localhost:5000/api/users/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp, newPassword }),
-      });
+      const response = await fetch(
+        "http://localhost:5000/api/users/reset-password",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, otp, newPassword }),
+        },
+      );
 
       const data = await response.json();
 
@@ -84,19 +94,24 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8 text-gray-900">
       <div className="max-w-md w-full space-y-8 bg-white p-10 rounded-xl shadow-lg border border-gray-200">
-        
         {/* --- STEP 1: LOGIN --- */}
         {step === "login" && (
           <div className="animate-fade-in">
             <div className="text-center">
-              <h2 className="text-3xl font-extrabold text-gray-900">Welcome back</h2>
-              <p className="mt-2 text-sm text-gray-600 font-medium">Securely log in to your LogiMatch account</p>
+              <h2 className="text-3xl font-extrabold text-gray-900">
+                Welcome back
+              </h2>
+              <p className="mt-2 text-sm text-gray-600 font-medium">
+                Securely log in to your LogiMatch account
+              </p>
             </div>
 
             <form className="mt-8 space-y-6" onSubmit={handleLogin}>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-bold text-gray-800 mb-1">Email Address</label>
+                  <label className="block text-sm font-bold text-gray-800 mb-1">
+                    Email Address
+                  </label>
                   <input
                     type="email"
                     placeholder="you@example.com"
@@ -108,9 +123,11 @@ export default function LoginPage() {
                 </div>
                 <div>
                   <div className="flex justify-between items-center mb-1">
-                    <label className="block text-sm font-bold text-gray-800">Password</label>
-                    <button 
-                      type="button" 
+                    <label className="block text-sm font-bold text-gray-800">
+                      Password
+                    </label>
+                    <button
+                      type="button"
                       onClick={() => setStep("forgot")}
                       className="text-sm font-bold text-blue-600 hover:text-blue-700 transition-colors"
                     >
@@ -139,7 +156,10 @@ export default function LoginPage() {
             <div className="text-center mt-6">
               <p className="text-sm text-gray-600 font-medium">
                 Don't have an account?{" "}
-                <Link href="/register" className="font-bold text-blue-600 hover:text-blue-700 transition-colors">
+                <Link
+                  href="/register"
+                  className="font-bold text-blue-600 hover:text-blue-700 transition-colors"
+                >
                   Sign up here
                 </Link>
               </p>
@@ -151,13 +171,19 @@ export default function LoginPage() {
         {step === "forgot" && (
           <div className="animate-fade-in">
             <div className="text-center">
-              <h2 className="text-2xl font-extrabold text-gray-900">Reset Password</h2>
-              <p className="mt-2 text-sm text-gray-600 font-medium">Enter your email and we'll send you a recovery code.</p>
+              <h2 className="text-2xl font-extrabold text-gray-900">
+                Reset Password
+              </h2>
+              <p className="mt-2 text-sm text-gray-600 font-medium">
+                Enter your email and we'll send you a recovery code.
+              </p>
             </div>
 
             <form className="mt-8 space-y-6" onSubmit={handleForgotPassword}>
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1">Account Email</label>
+                <label className="block text-sm font-bold text-gray-800 mb-1">
+                  Account Email
+                </label>
                 <input
                   type="email"
                   placeholder="you@example.com"
@@ -174,10 +200,10 @@ export default function LoginPage() {
               >
                 Send Recovery Code
               </button>
-              
+
               <div className="text-center mt-4">
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => setStep("login")}
                   className="text-sm font-bold text-gray-500 hover:text-gray-800 transition-colors"
                 >
@@ -193,13 +219,20 @@ export default function LoginPage() {
           <div className="animate-fade-in">
             <div className="text-center">
               <span className="text-4xl mb-3 block">🔐</span>
-              <h2 className="text-2xl font-extrabold text-gray-900">Create New Password</h2>
-              <p className="mt-2 text-sm text-gray-600 font-medium">Enter the 6-digit code sent to <span className="font-bold text-gray-900">{email}</span>.</p>
+              <h2 className="text-2xl font-extrabold text-gray-900">
+                Create New Password
+              </h2>
+              <p className="mt-2 text-sm text-gray-600 font-medium">
+                Enter the 6-digit code sent to{" "}
+                <span className="font-bold text-gray-900">{email}</span>.
+              </p>
             </div>
 
             <form className="mt-6 space-y-5" onSubmit={handleResetPassword}>
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1">6-Digit Recovery Code</label>
+                <label className="block text-sm font-bold text-gray-800 mb-1">
+                  6-Digit Recovery Code
+                </label>
                 <input
                   type="text"
                   placeholder="123456"
@@ -210,9 +243,11 @@ export default function LoginPage() {
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-bold tracking-widest text-center text-xl transition-all"
                 />
               </div>
-              
+
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1">New Password</label>
+                <label className="block text-sm font-bold text-gray-800 mb-1">
+                  New Password
+                </label>
                 <input
                   type="password"
                   placeholder="••••••••"
@@ -231,8 +266,8 @@ export default function LoginPage() {
               </button>
 
               <div className="text-center mt-4">
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => setStep("login")}
                   className="text-sm font-bold text-gray-500 hover:text-gray-800 transition-colors"
                 >
@@ -242,7 +277,6 @@ export default function LoginPage() {
             </form>
           </div>
         )}
-
       </div>
     </div>
   );

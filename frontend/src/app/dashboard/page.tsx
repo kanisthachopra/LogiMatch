@@ -2,7 +2,9 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 
-// --- 1. THE JOB CARD COMPONENT ---
+// ==========================================
+// 1. THE JOB CARD COMPONENT
+// ==========================================
 function JobCard({
   job,
   currentUserId,
@@ -16,12 +18,11 @@ function JobCard({
 
   const handleBidSubmit = async () => {
     try {
-      const token = localStorage.getItem("token");
       const response = await fetch("http://localhost:5000/api/bids", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
         body: JSON.stringify({ job_id: job.id, amount: bidAmount }),
       });
@@ -34,7 +35,6 @@ function JobCard({
 
       if (response.ok) {
         alert(`Success! Bid of ₹${bidAmount} placed on Job #${job.id}`);
-        setBidAmount("");
         window.location.reload();
       } else {
         alert("Failed to place bid.");
@@ -46,7 +46,11 @@ function JobCard({
 
   const isMyJob = currentUserId === String(job.seeker_id);
 
-  // Helper to format dates cleanly
+  const renderStars = (sum: number, count: number) => {
+    const avg = count > 0 ? Math.round(sum / count) : 0;
+    return "⭐".repeat(avg) + "☆".repeat(5 - avg);
+  };
+
   const formatDate = (dateString: string) => {
     if (!dateString) return "TBD";
     return new Date(dateString).toLocaleString("en-US", {
@@ -59,7 +63,7 @@ function JobCard({
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow relative">
-      {/* Action Buttons Top Right */}
+      {/* Top Right Action Buttons */}
       <div className="absolute top-6 right-6 flex gap-2">
         <button
           onClick={() => setShowManifest(!showManifest)}
@@ -75,48 +79,50 @@ function JobCard({
         </button>
       </div>
 
-      <div className="flex justify-between items-start border-b border-gray-100 pb-4 mb-4">
-        <div>
-          <h3 className="text-xl font-bold text-gray-900 flex items-center gap-3 pr-48">
-            {job.origin} <span className="text-gray-400 text-sm">➔</span>{" "}
-            {job.destination}
-          </h3>
-          <div className="mt-2 flex flex-wrap gap-2 text-sm">
-            <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full font-medium">
-              ⚖️ {job.weight_kg} kg
+      {/* Main Header */}
+      <div className="border-b border-gray-100 pb-4 mb-4">
+        <h3 className="text-xl font-bold text-gray-900 flex items-center gap-3 pr-48">
+          {job.origin.split(",")[0]}{" "}
+          <span className="text-gray-400 text-sm">➔</span>{" "}
+          {job.destination.split(",")[0]}
+        </h3>
+
+        {/* Badges & Seeker Ask */}
+        <div className="mt-3 flex flex-wrap gap-2 text-sm items-center">
+          <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full font-bold">
+            ⚖️ {job.weight_kg} kg
+          </span>
+          <span className="bg-green-50 text-green-700 px-3 py-1 rounded-full font-bold">
+            🎯 Target Budget:{" "}
+            {job.seeker_ask ? `₹${job.seeker_ask}` : "Open to Offers"}
+          </span>
+          {job.is_hazmat && (
+            <span className="bg-red-100 text-red-800 px-3 py-1 rounded-full font-bold text-xs">
+              ☣️ HAZMAT
             </span>
-            <span className="bg-green-50 text-green-700 px-3 py-1 rounded-full font-medium uppercase tracking-wider text-xs">
-              {job.status}
+          )}
+          {job.requires_refrigeration && (
+            <span className="bg-cyan-100 text-cyan-800 px-3 py-1 rounded-full font-bold text-xs">
+              ❄️ REEFER
             </span>
-            {/* Risk Badges */}
-            {job.is_hazmat && (
-              <span className="bg-red-100 text-red-800 px-3 py-1 rounded-full font-bold text-xs">
-                ☣️ HAZMAT
-              </span>
-            )}
-            {job.requires_refrigeration && (
-              <span className="bg-cyan-100 text-cyan-800 px-3 py-1 rounded-full font-bold text-xs">
-                ❄️ REEFER
-              </span>
-            )}
-            {job.is_fragile && (
-              <span className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full font-bold text-xs">
-                📦 FRAGILE
-              </span>
-            )}
-          </div>
+          )}
+          {job.is_fragile && (
+            <span className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full font-bold text-xs">
+              📦 FRAGILE
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Expanded Seeker Profile View */}
+      {/* Expanded Seeker Profile */}
       {showSeekerProfile && (
-        <div className="mb-5 p-4 bg-gray-50 rounded-lg border border-gray-200 flex gap-4 items-center animate-fade-in">
-          <div className="w-14 h-14 rounded-full bg-gray-300 flex-shrink-0 overflow-hidden border-2 border-white shadow-sm">
+        <div className="mb-5 p-4 bg-gray-50 rounded-lg border border-gray-200 flex gap-4 items-center">
+          <div className="w-14 h-14 rounded-full bg-gray-300 flex-shrink-0 overflow-hidden shadow-sm border border-gray-200">
             {job.seeker_photo ? (
               <img
                 src={job.seeker_photo}
-                alt="Seeker Avatar"
                 className="w-full h-full object-cover"
+                alt="Seeker"
               />
             ) : (
               <span className="flex items-center justify-center w-full h-full text-2xl text-gray-600">
@@ -126,7 +132,7 @@ function JobCard({
           </div>
           <div>
             <p className="font-bold text-gray-900 text-lg">
-              {job.seeker_name || "Verified Cargo Seeker"}
+              {job.seeker_name || "Verified Seeker"}
             </p>
             <p className="text-sm text-gray-700 mt-1">
               {job.seeker_bio || "This user hasn't added a bio yet."}
@@ -135,35 +141,36 @@ function JobCard({
         </div>
       )}
 
-      {/* Expanded Manifest View */}
+      {/* Expanded Cargo Manifest */}
       {showManifest && (
-        <div className="mb-5 p-5 bg-blue-50/50 rounded-lg border border-blue-100 text-sm animate-fade-in grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="mb-5 p-5 bg-blue-50/30 rounded-lg border border-blue-100 text-sm grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <h4 className="font-bold text-gray-800 mb-2 border-b border-blue-200 pb-1">
               Cargo Details
             </h4>
             <p className="text-gray-700">
-              <span className="font-semibold text-gray-900">Dimensions:</span>{" "}
-              {job.length_cm || "-"}L x {job.width_cm || "-"}W x{" "}
-              {job.height_cm || "-"}H cm
+              <span className="font-semibold text-gray-900">Dimensions: </span>
+              {job.length_cm || job.length || "-"}L x{" "}
+              {job.width_cm || job.width || "-"}W x{" "}
+              {job.height_cm || job.height || "-"}H cm
             </p>
             <p className="text-gray-700">
-              <span className="font-semibold text-gray-900">Packaging:</span>{" "}
+              <span className="font-semibold text-gray-900">Packaging: </span>
               {job.packaging_type || "Unspecified"}
             </p>
           </div>
           <div>
             <h4 className="font-bold text-gray-800 mb-2 border-b border-blue-200 pb-1">
-              Scheduling
+              Scheduling Windows
             </h4>
             <p className="text-gray-700">
-              <span className="font-semibold text-gray-900">Pickup:</span>{" "}
-              {formatDate(job.pickup_window_start)} -{" "}
+              <span className="font-semibold text-gray-900">Pickup: </span>
+              {formatDate(job.pickup_window_start)} to{" "}
               {formatDate(job.pickup_window_end)}
             </p>
             <p className="text-gray-700">
-              <span className="font-semibold text-gray-900">Delivery:</span>{" "}
-              {formatDate(job.delivery_window_start)} -{" "}
+              <span className="font-semibold text-gray-900">Delivery: </span>
+              {formatDate(job.delivery_window_start)} to{" "}
               {formatDate(job.delivery_window_end)}
             </p>
           </div>
@@ -171,8 +178,8 @@ function JobCard({
             <h4 className="font-bold text-gray-800 mb-2 border-b border-blue-200 pb-1">
               Equipment & Instructions
             </h4>
-            <p className="text-gray-700 mb-1">
-              <span className="font-semibold text-gray-900">Requires:</span>
+            <p className="text-gray-700 mb-2">
+              <span className="font-semibold text-gray-900">Requires: </span>
               {job.requires_liftgate ? " Liftgate " : ""}
               {job.requires_loading_dock ? " Loading Dock " : ""}
               {!job.requires_liftgate && !job.requires_loading_dock
@@ -180,13 +187,14 @@ function JobCard({
                 : ""}
             </p>
             <p className="text-gray-700 font-medium italic mt-2 bg-white p-3 rounded-lg border border-blue-100">
-              "{job.special_instructions || "No special instructions provided."}"
+              "{job.special_instructions || "No special instructions provided."}
+              "
             </p>
           </div>
         </div>
       )}
 
-      {/* 🏆 THE LIVE AUCTION BOARD */}
+      {/* Live Auction Board */}
       <div className="mb-5 bg-gray-50 rounded-lg p-4 border border-gray-100">
         <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
           Live Auction Bids ({job.bids.length})
@@ -202,30 +210,34 @@ function JobCard({
               return (
                 <div
                   key={bid.bid_id}
-                  className={`flex items-center text-sm p-2 rounded-md ${isMyBid ? "bg-blue-100 border border-blue-200" : "bg-white border border-gray-200"}`}
+                  className={`flex items-center text-sm p-3 rounded-lg ${isMyBid ? "bg-blue-100 border border-blue-200" : "bg-white border border-gray-200 shadow-sm"}`}
                 >
-                  <div className="w-6 h-6 rounded-full bg-gray-200 mr-3 overflow-hidden flex-shrink-0">
+                  <div className="w-8 h-8 rounded-full bg-gray-200 mr-3 overflow-hidden flex-shrink-0">
                     {bid.provider_photo ? (
                       <img
                         src={bid.provider_photo}
-                        alt="Provider"
                         className="w-full h-full object-cover"
                       />
                     ) : (
-                      <span className="flex items-center justify-center w-full h-full text-xs text-gray-500">
+                      <span className="flex items-center justify-center w-full h-full text-sm">
                         👤
                       </span>
                     )}
                   </div>
-                  <span className="font-medium text-gray-800 flex-grow">
-                    {index === 0 ? "🏆 " : ""}
-                    {bid.provider_name}{" "}
-                    {isMyBid && (
-                      <span className="text-blue-600 font-bold">(You)</span>
-                    )}
-                  </span>
+                  <div className="flex-grow">
+                    <p className="font-bold text-gray-900">
+                      {index === 0 ? "🏆 " : ""}
+                      {bid.provider_name}{" "}
+                      {isMyBid && (
+                        <span className="text-blue-600 font-bold">(You)</span>
+                      )}
+                    </p>
+                    <p className="text-xs text-yellow-600 font-bold tracking-widest">
+                      {renderStars(bid.rating_sum, bid.rating_count)}
+                    </p>
+                  </div>
                   <span
-                    className={`font-bold ${index === 0 ? "text-green-600" : "text-gray-600"}`}
+                    className={`text-lg font-black ${index === 0 ? "text-green-600" : "text-gray-600"}`}
                   >
                     ₹{bid.amount}
                   </span>
@@ -236,27 +248,28 @@ function JobCard({
         )}
       </div>
 
+      {/* Bidding Input Section */}
       {isMyJob ? (
-        <div className="text-center py-2 bg-gray-100 rounded-lg text-gray-500 text-sm font-medium border border-gray-200">
-          This is your cargo. Check your History to manage bids.
+        <div className="text-center py-3 bg-gray-100 rounded-lg text-gray-500 text-sm font-bold border border-gray-200">
+          This is your cargo. Go to Job History to accept bids.
         </div>
       ) : (
         <div className="flex gap-3 items-center">
           <div className="relative flex-grow">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <span className="text-gray-500 font-medium">₹</span>
-            </div>
+            <span className="absolute left-3 top-2.5 text-gray-500 font-bold">
+              ₹
+            </span>
             <input
               type="number"
               placeholder="Enter your competitive bid"
               value={bidAmount}
               onChange={(e) => setBidAmount(e.target.value)}
-              className="w-full pl-8 pr-4 py-2.5 border border-gray-300 rounded-lg bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium shadow-sm"
+              className="w-full pl-8 pr-4 py-2.5 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 font-bold"
             />
           </div>
           <button
             onClick={handleBidSubmit}
-            className="whitespace-nowrap bg-gray-900 text-white font-bold py-2.5 px-6 rounded-lg hover:bg-black transition-colors shadow-sm"
+            className="whitespace-nowrap bg-gray-900 text-white font-black py-2.5 px-6 rounded-lg hover:bg-black shadow-md transition-colors"
           >
             Submit Bid
           </button>
@@ -266,7 +279,9 @@ function JobCard({
   );
 }
 
-// --- 2. THE MAIN UNIFIED PAGE ---
+// ==========================================
+// 2. THE MAIN DASHBOARD PAGE
+// ==========================================
 export default function UnifiedDashboardPage() {
   const [jobs, setJobs] = useState([]);
   const [myHistory, setMyHistory] = useState([]);
@@ -276,59 +291,75 @@ export default function UnifiedDashboardPage() {
   const [isPostModalOpen, setIsPostModalOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
 
-  // Form States (Basic)
+  // Search & Filter States
+  const [searchOrigin, setSearchOrigin] = useState("");
+  const [searchDest, setSearchDest] = useState("");
+  const [filterHazmat, setFilterHazmat] = useState(false);
+  const [filterReefer, setFilterReefer] = useState(false);
+  const [filterFragile, setFilterFragile] = useState(false);
+
+  // Form States (Professional Manifest)
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [weight, setWeight] = useState("");
+  const [seekerAsk, setSeekerAsk] = useState("");
 
-  // Form States (Professional Manifest)
   const [length, setLength] = useState("");
   const [width, setWidth] = useState("");
   const [height, setHeight] = useState("");
   const [packagingType, setPackagingType] = useState("Palletized");
+
   const [isFragile, setIsFragile] = useState(false);
   const [isHazmat, setIsHazmat] = useState(false);
   const [requiresRefrigeration, setRequiresRefrigeration] = useState(false);
+
   const [pickupStart, setPickupStart] = useState("");
   const [pickupEnd, setPickupEnd] = useState("");
   const [deliveryStart, setDeliveryStart] = useState("");
   const [deliveryEnd, setDeliveryEnd] = useState("");
+
   const [requiresLiftgate, setRequiresLiftgate] = useState(false);
   const [requiresLoadingDock, setRequiresLoadingDock] = useState(false);
   const [specialInstructions, setSpecialInstructions] = useState("");
 
+  const [pricingBreakdown, setPricingBreakdown] = useState<any>(null);
+
+  // Autocomplete States
   const [originSuggestions, setOriginSuggestions] = useState<any[]>([]);
   const [destSuggestions, setDestSuggestions] = useState<any[]>([]);
   const [isTypingOrigin, setIsTypingOrigin] = useState(false);
   const [isTypingDest, setIsTypingDest] = useState(false);
-  const [estimatedPrice, setEstimatedPrice] = useState<number | null>(null);
-  const [distance, setDistance] = useState<number | null>(null);
 
   useEffect(() => {
     setCurrentUserId(localStorage.getItem("userId"));
+
     const fetchData = async () => {
       try {
-        const token = localStorage.getItem("token");
-        const headers = token
-          ? { Authorization: `Bearer ${token}` }
-          : undefined;
+        const headers = {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        };
 
         const jobsRes = await fetch("http://localhost:5000/api/jobs");
-        if (jobsRes.ok) setJobs(await jobsRes.json());
+        if (jobsRes.ok) {
+          setJobs(await jobsRes.json());
+        }
 
-        if (token) {
+        if (localStorage.getItem("token")) {
           const historyRes = await fetch(
             "http://localhost:5000/api/profile/my-jobs",
             { headers },
           );
-          if (historyRes.ok) setMyHistory(await historyRes.json());
+          if (historyRes.ok) {
+            setMyHistory(await historyRes.json());
+          }
         }
       } catch (error) {
-        console.error("Failed to fetch data:", error);
+        console.error(error);
       } finally {
         setIsLoading(false);
       }
     };
+
     fetchData();
   }, []);
 
@@ -338,13 +369,15 @@ export default function UnifiedDashboardPage() {
       if (origin.length > 2 && isTypingOrigin) {
         try {
           const res = await fetch(
-            `https://nominatim.openstreetmap.org/search?q=${origin}&format=json&limit=5`,
+            `https://nominatim.openstreetmap.org/search?q=${origin},India&format=json&limit=5`,
           );
           setOriginSuggestions(await res.json());
         } catch (err) {
           console.error(err);
         }
-      } else setOriginSuggestions([]);
+      } else {
+        setOriginSuggestions([]);
+      }
     }, 500);
     return () => clearTimeout(delayDebounce);
   }, [origin, isTypingOrigin]);
@@ -355,13 +388,15 @@ export default function UnifiedDashboardPage() {
       if (destination.length > 2 && isTypingDest) {
         try {
           const res = await fetch(
-            `https://nominatim.openstreetmap.org/search?q=${destination}&format=json&limit=5`,
+            `https://nominatim.openstreetmap.org/search?q=${destination},India&format=json&limit=5`,
           );
           setDestSuggestions(await res.json());
         } catch (err) {
           console.error(err);
         }
-      } else setDestSuggestions([]);
+      } else {
+        setDestSuggestions([]);
+      }
     }, 500);
     return () => clearTimeout(delayDebounce);
   }, [destination, isTypingDest]);
@@ -371,16 +406,20 @@ export default function UnifiedDashboardPage() {
     setIsTypingOrigin(false);
     setOriginSuggestions([]);
   };
+
   const handleDestSelect = (cityName: string) => {
     setDestination(cityName.split(",")[0]);
     setIsTypingDest(false);
     setDestSuggestions([]);
   };
 
+  // AI Pricing Engine Handler
   const handleCalculatePrice = async (e: React.MouseEvent) => {
     e.preventDefault();
-    if (!origin || !destination || !weight)
+    if (!origin || !destination || !weight) {
       return alert("Fill in Origin, Destination, and Weight first!");
+    }
+
     try {
       const response = await fetch("http://localhost:5000/api/price-estimate", {
         method: "POST",
@@ -389,13 +428,26 @@ export default function UnifiedDashboardPage() {
           originCity: origin,
           destCity: destination,
           weight: Number(weight),
+          length_cm: Number(length),
+          width_cm: Number(width),
+          height_cm: Number(height),
+          packaging_type: packagingType,
+          is_fragile: isFragile,
+          is_hazmat: isHazmat,
+          requires_refrigeration: requiresRefrigeration,
+          requires_liftgate: requiresLiftgate,
+          requires_loading_dock: requiresLoadingDock,
         }),
       });
+
       const data = await response.json();
+
       if (response.ok) {
-        setEstimatedPrice(data.price);
-        setDistance(data.distance);
-      } else alert("Could not calculate price.");
+        setPricingBreakdown(data);
+        setSeekerAsk(data.price.toString());
+      } else {
+        alert("Could not calculate price. Ensure cities are valid.");
+      }
     } catch (error) {
       console.error(error);
     }
@@ -404,11 +456,11 @@ export default function UnifiedDashboardPage() {
   const handlePostJob = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const token = localStorage.getItem("token");
       const payload = {
         origin,
         destination,
         weight_kg: Number(weight),
+        seeker_ask: Number(seekerAsk),
         length_cm: Number(length),
         width_cm: Number(width),
         height_cm: Number(height),
@@ -429,13 +481,13 @@ export default function UnifiedDashboardPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
         body: JSON.stringify(payload),
       });
 
       if (response.ok) {
-        alert(`Success! Professional Cargo Manifest posted.`);
+        alert(`Success! Professional Cargo Manifest posted to the market.`);
         window.location.reload();
       } else {
         alert("Failed to post the shipment.");
@@ -446,18 +498,19 @@ export default function UnifiedDashboardPage() {
   };
 
   const handleAcceptBid = async (bidId: number) => {
-    if (!confirm("Are you sure you want to accept this bid?")) return;
+    if (!confirm("Are you sure you want to officially accept this bid?"))
+      return;
     try {
-      const token = localStorage.getItem("token");
       const response = await fetch(
         `http://localhost:5000/api/bids/${bidId}/accept`,
         {
           method: "PUT",
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         },
       );
+
       if (response.ok) {
-        alert("Bid accepted!");
+        alert("Bid accepted! Job assigned.");
         window.location.reload();
       }
     } catch (error) {
@@ -465,469 +518,600 @@ export default function UnifiedDashboardPage() {
     }
   };
 
+  // Live Market Filter Logic
+  const filteredJobs = jobs.filter((job: any) => {
+    const matchesOrigin = job.origin
+      .toLowerCase()
+      .includes(searchOrigin.toLowerCase());
+    const matchesDest = job.destination
+      .toLowerCase()
+      .includes(searchDest.toLowerCase());
+    const matchesHazmat = filterHazmat ? job.is_hazmat : true;
+    const matchesReefer = filterReefer ? job.requires_refrigeration : true;
+    const matchesFragile = filterFragile ? job.is_fragile : true;
+
+    return (
+      matchesOrigin &&
+      matchesDest &&
+      matchesHazmat &&
+      matchesReefer &&
+      matchesFragile
+    );
+  });
+
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      <nav className="bg-white border-b border-gray-200 sticky top-0 z-10">
+    <div className="min-h-screen bg-gray-50 text-gray-900 pb-20 font-sans">
+      {/* ============================== */}
+      {/* Top Navigation               */}
+      {/* ============================== */}
+      <nav className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <h1 className="text-2xl font-extrabold text-blue-600 tracking-tight">
               LogiMatch
             </h1>
-            <div className="flex gap-3 ml-4 border-l pl-6 border-gray-200">
+            <div className="hidden sm:flex gap-3 ml-4 border-l pl-6 border-gray-200">
               <button
                 onClick={() => setIsPostModalOpen(true)}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-colors text-sm"
+                className="flex items-center gap-2 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-sm hover:bg-blue-700 transition-colors text-sm"
               >
-                <span>➕</span> Post a Job
+                ➕ Post a Job
               </button>
               <button
                 onClick={() => setIsHistoryModalOpen(true)}
-                className="flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 font-bold py-2 px-4 rounded-lg border border-gray-300 transition-colors text-sm"
+                className="flex items-center gap-2 bg-white text-gray-700 font-bold py-2 px-4 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors text-sm"
               >
-                <span>📜</span> Job History
+                📜 Job History
               </button>
             </div>
           </div>
           <Link
             href="/profile"
-            className="flex items-center gap-2 text-gray-600 hover:text-black transition-colors bg-gray-100 px-4 py-2 rounded-full font-medium"
+            className="flex items-center gap-2 text-gray-700 bg-gray-100 border border-gray-200 px-4 py-2 rounded-full font-bold hover:bg-gray-200 transition-colors"
           >
-            <span className="text-lg">👤</span> My Profile
+            👤 My Profile
           </Link>
         </div>
       </nav>
 
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">
+      {/* ============================== */}
+      {/* Search & Filter Engine       */}
+      {/* ============================== */}
+      <div className="bg-white border-b border-gray-200 py-4 shadow-sm mb-8 z-10 relative">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row gap-4 items-center justify-between">
+          <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+            <div className="relative w-full sm:w-48">
+              <span className="absolute left-3 top-2.5 text-gray-400">📍</span>
+              <input
+                type="text"
+                placeholder="Origin..."
+                value={searchOrigin}
+                onChange={(e) => setSearchOrigin(e.target.value)}
+                className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 font-medium w-full text-sm"
+              />
+            </div>
+            <div className="relative w-full sm:w-48">
+              <span className="absolute left-3 top-2.5 text-gray-400">🏁</span>
+              <input
+                type="text"
+                placeholder="Destination..."
+                value={searchDest}
+                onChange={(e) => setSearchDest(e.target.value)}
+                className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 font-medium w-full text-sm"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3 items-center">
+            <span className="font-bold text-gray-500 text-xs uppercase tracking-wider hidden md:inline">
+              Requirements:
+            </span>
+
+            <label className="flex items-center gap-1.5 cursor-pointer font-bold text-sm text-red-700 bg-red-50 px-3 py-1.5 rounded-md border border-red-100 select-none hover:bg-red-100 transition-colors">
+              <input
+                type="checkbox"
+                checked={filterHazmat}
+                onChange={(e) => setFilterHazmat(e.target.checked)}
+                className="accent-red-600 w-4 h-4"
+              />
+              ☣️ Hazmat
+            </label>
+
+            <label className="flex items-center gap-1.5 cursor-pointer font-bold text-sm text-cyan-700 bg-cyan-50 px-3 py-1.5 rounded-md border border-cyan-100 select-none hover:bg-cyan-100 transition-colors">
+              <input
+                type="checkbox"
+                checked={filterReefer}
+                onChange={(e) => setFilterReefer(e.target.checked)}
+                className="accent-cyan-600 w-4 h-4"
+              />
+              ❄️ Reefer
+            </label>
+
+            <label className="flex items-center gap-1.5 cursor-pointer font-bold text-sm text-orange-700 bg-orange-50 px-3 py-1.5 rounded-md border border-orange-100 select-none hover:bg-orange-100 transition-colors">
+              <input
+                type="checkbox"
+                checked={filterFragile}
+                onChange={(e) => setFilterFragile(e.target.checked)}
+                className="accent-orange-600 w-4 h-4"
+              />
+              📦 Fragile
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* ============================== */}
+      {/* Main Market Board            */}
+      {/* ============================== */}
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+        <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center justify-between">
           Live Open Market
+          <span className="text-sm font-medium text-gray-500 bg-gray-200 px-3 py-1 rounded-full">
+            {filteredJobs.length} Jobs Found
+          </span>
         </h2>
+
         <div className="flex flex-col gap-5">
           {isLoading ? (
-            <p className="text-gray-500 animate-pulse font-medium">
-              Loading market data...
+            <p className="text-gray-500 font-bold text-lg animate-pulse text-center py-12">
+              Loading live market data...
             </p>
-          ) : jobs.length === 0 ? (
-            <p className="text-center py-12 text-gray-500">No open jobs.</p>
+          ) : filteredJobs.length === 0 ? (
+            <div className="text-center py-16 bg-white rounded-xl border border-dashed border-gray-300">
+              <span className="text-4xl block mb-3">🏜️</span>
+              <p className="text-gray-500 font-bold text-lg">
+                No jobs match your exact filters.
+              </p>
+              <button
+                onClick={() => {
+                  setSearchOrigin("");
+                  setSearchDest("");
+                  setFilterHazmat(false);
+                  setFilterReefer(false);
+                  setFilterFragile(false);
+                }}
+                className="mt-4 text-blue-600 font-bold hover:text-blue-800 transition-colors"
+              >
+                Clear all filters
+              </button>
+            </div>
           ) : (
-            jobs.map((job: any) => (
+            filteredJobs.map((job: any) => (
               <JobCard key={job.id} job={job} currentUserId={currentUserId} />
             ))
           )}
         </div>
       </div>
 
-      {/* --- MODAL 1: POST A NEW SHIPMENT (EXPANDED MANIFEST) --- */}
+      {/* ============================== */}
+      {/* MODAL 1: POST A NEW SHIPMENT */}
+      {/* ============================== */}
       {isPostModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto border border-gray-100">
-            <div className="flex justify-between items-center mb-6 border-b pb-3">
-              <h3 className="text-2xl font-bold text-gray-900">
-                Post a Professional Shipment Manifest
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6 border-b border-gray-200 pb-4">
+              <h3 className="text-2xl font-black text-gray-900">
+                Post Professional Manifest
               </h3>
               <button
                 onClick={() => setIsPostModalOpen(false)}
-                className="text-gray-400 hover:text-red-500 font-bold text-3xl cursor-pointer"
+                className="text-gray-400 hover:text-red-500 font-bold text-3xl transition-colors"
               >
                 &times;
               </button>
             </div>
 
-            <form onSubmit={handlePostJob} className="space-y-8">
-              {/* Section 1: Core Logistics */}
-              <div className="bg-gray-50 p-5 rounded-lg border border-gray-200">
-                <h4 className="font-bold text-gray-800 mb-4 border-b pb-2">
-                  1. Route & Weight
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="relative">
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
-                      Origin City
-                    </label>
-                    <input
-                      type="text"
-                      value={origin}
-                      placeholder="Type origin location..."
-                      onChange={(e) => {
-                        setOrigin(e.target.value);
-                        setIsTypingOrigin(true);
-                      }}
-                      required
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                    />
-                    {originSuggestions.length > 0 && (
-                      <ul className="absolute z-20 w-full bg-white border border-gray-200 rounded-md shadow-lg mt-1 max-h-48 overflow-y-auto">
-                        {originSuggestions.map((city: any, i: number) => (
-                          <li
-                            key={i}
-                            onClick={() =>
-                              handleOriginSelect(city.display_name)
-                            }
-                            className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm text-gray-900 border-b border-gray-100 last:border-0 font-medium"
-                          >
-                            {city.display_name}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
-                      Destination City
-                    </label>
-                    <input
-                      type="text"
-                      value={destination}
-                      placeholder="Type destination location..."
-                      onChange={(e) => {
-                        setDestination(e.target.value);
-                        setIsTypingDest(true);
-                      }}
-                      required
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                    />
-                    {destSuggestions.length > 0 && (
-                      <ul className="absolute z-20 w-full bg-white border border-gray-200 rounded-md shadow-lg mt-1 max-h-48 overflow-y-auto">
-                        {destSuggestions.map((city: any, i: number) => (
-                          <li
-                            key={i}
-                            onClick={() => handleDestSelect(city.display_name)}
-                            className="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm text-gray-900 border-b border-gray-100 last:border-0 font-medium"
-                          >
-                            {city.display_name}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
-                      Total Weight (KG)
-                    </label>
-                    <input
-                      type="number"
-                      value={weight}
-                      placeholder="e.g., 1500"
-                      onChange={(e) => setWeight(e.target.value)}
-                      required
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                    />
-                  </div>
+            <form onSubmit={handlePostJob} className="space-y-6">
+              {/* Route & Weight (With Dropdowns) */}
+              <div className="bg-gray-50 p-6 rounded-xl border border-gray-200 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="relative">
+                  <label className="block text-sm font-extrabold text-gray-800 mb-2">
+                    Origin City
+                  </label>
+                  <input
+                    type="text"
+                    value={origin}
+                    placeholder="Type origin..."
+                    onChange={(e) => {
+                      setOrigin(e.target.value);
+                      setIsTypingOrigin(true);
+                    }}
+                    required
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                  />
+                  {originSuggestions.length > 0 && (
+                    <ul className="absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-xl mt-1 max-h-48 overflow-y-auto">
+                      {originSuggestions.map((city: any, i: number) => (
+                        <li
+                          key={i}
+                          onClick={() => handleOriginSelect(city.display_name)}
+                          className="px-4 py-3 hover:bg-blue-50 cursor-pointer text-sm text-gray-900 border-b border-gray-100 last:border-0 font-medium transition-colors"
+                        >
+                          {city.display_name}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <label className="block text-sm font-extrabold text-gray-800 mb-2">
+                    Destination City
+                  </label>
+                  <input
+                    type="text"
+                    value={destination}
+                    placeholder="Type destination..."
+                    onChange={(e) => {
+                      setDestination(e.target.value);
+                      setIsTypingDest(true);
+                    }}
+                    required
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                  />
+                  {destSuggestions.length > 0 && (
+                    <ul className="absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-xl mt-1 max-h-48 overflow-y-auto">
+                      {destSuggestions.map((city: any, i: number) => (
+                        <li
+                          key={i}
+                          onClick={() => handleDestSelect(city.display_name)}
+                          className="px-4 py-3 hover:bg-blue-50 cursor-pointer text-sm text-gray-900 border-b border-gray-100 last:border-0 font-medium transition-colors"
+                        >
+                          {city.display_name}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-extrabold text-gray-800 mb-2">
+                    Total Weight (KG)
+                  </label>
+                  <input
+                    type="number"
+                    value={weight}
+                    onChange={(e) => setWeight(e.target.value)}
+                    placeholder="e.g., 2000"
+                    required
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                  />
                 </div>
               </div>
 
-              {/* Section 2: Dimensions & Type */}
-              <div className="bg-gray-50 p-5 rounded-lg border border-gray-200">
-                <h4 className="font-bold text-gray-800 mb-4 border-b pb-2">
-                  2. Cargo Specifications
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+              {/* Cargo Specs */}
+              <div className="bg-gray-50 p-6 rounded-xl border border-gray-200">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    <label className="block text-sm font-bold text-gray-700 mb-1">
                       Length (cm)
                     </label>
                     <input
                       type="number"
                       value={length}
-                      placeholder="Length"
                       onChange={(e) => setLength(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-md font-medium"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    <label className="block text-sm font-bold text-gray-700 mb-1">
                       Width (cm)
                     </label>
                     <input
                       type="number"
                       value={width}
-                      placeholder="Width"
                       onChange={(e) => setWidth(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-md font-medium"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    <label className="block text-sm font-bold text-gray-700 mb-1">
                       Height (cm)
                     </label>
                     <input
                       type="number"
                       value={height}
-                      placeholder="Height"
                       onChange={(e) => setHeight(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-md font-medium"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    <label className="block text-sm font-bold text-gray-700 mb-1">
                       Packaging
                     </label>
                     <select
                       value={packagingType}
                       onChange={(e) => setPackagingType(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-md bg-white text-gray-950 focus:ring-2 focus:ring-blue-500 outline-none font-medium cursor-pointer"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-md font-medium bg-white text-gray-900 outline-none"
                     >
-                      <option className="text-gray-950">Palletized</option>
-                      <option className="text-gray-950">Crates</option>
-                      <option className="text-gray-950">Loose Boxes</option>
-                      <option className="text-gray-950">Liquid Bulk</option>
+                      <option>Palletized</option>
+                      <option>Boxed</option>
+                      <option>Crated</option>
+                      <option>Drums</option>
+                      <option>Loose</option>
                     </select>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-6 mt-4 pt-4 border-t border-gray-200">
-                  <label className="flex items-center gap-2 cursor-pointer font-bold text-red-700 select-none">
+
+                <div className="flex flex-wrap gap-6 pt-4 border-t border-gray-200">
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-red-700">
                     <input
                       type="checkbox"
                       checked={isHazmat}
                       onChange={(e) => setIsHazmat(e.target.checked)}
-                      className="w-4 h-4 accent-red-600"
-                    />{" "}
-                    ☣️ Contains HAZMAT
+                      className="w-5 h-5 accent-red-600"
+                    />
+                    ☣️ HAZMAT
                   </label>
-                  <label className="flex items-center gap-2 cursor-pointer font-bold text-cyan-700 select-none">
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-cyan-700">
                     <input
                       type="checkbox"
                       checked={requiresRefrigeration}
                       onChange={(e) =>
                         setRequiresRefrigeration(e.target.checked)
                       }
-                      className="w-4 h-4 accent-cyan-600"
-                    />{" "}
-                    ❄️ Requires Reefer
+                      className="w-5 h-5 accent-cyan-600"
+                    />
+                    ❄️ Reefer Required
                   </label>
-                  <label className="flex items-center gap-2 cursor-pointer font-bold text-orange-700 select-none">
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-orange-700">
                     <input
                       type="checkbox"
                       checked={isFragile}
                       onChange={(e) => setIsFragile(e.target.checked)}
-                      className="w-4 h-4 accent-orange-600"
-                    />{" "}
-                    📦 Fragile Goods
+                      className="w-5 h-5 accent-orange-600"
+                    />
+                    📦 Fragile
                   </label>
                 </div>
               </div>
 
-              {/* Section 3: Scheduling & Equipment */}
-              <div className="bg-gray-50 p-5 rounded-lg border border-gray-200">
-                <h4 className="font-bold text-gray-800 mb-4 border-b pb-2">
-                  3. Scheduling & Operations
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                  <div className="space-y-3">
-                    <h5 className="text-sm font-bold text-gray-600 uppercase tracking-wide border-l-2 border-gray-400 pl-2">
-                      Pickup Window
-                    </h5>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">
-                        Earliest
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={pickupStart}
-                        onChange={(e) => setPickupStart(e.target.value)}
-                        className="w-full px-3 py-1.5 border border-gray-300 rounded-md bg-white text-gray-950 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">
-                        Latest
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={pickupEnd}
-                        onChange={(e) => setPickupEnd(e.target.value)}
-                        className="w-full px-3 py-1.5 border border-gray-300 rounded-md bg-white text-gray-950 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    <h5 className="text-sm font-bold text-gray-600 uppercase tracking-wide border-l-2 border-gray-400 pl-2">
-                      Delivery Window
-                    </h5>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">
-                        Earliest
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={deliveryStart}
-                        onChange={(e) => setDeliveryStart(e.target.value)}
-                        className="w-full px-3 py-1.5 border border-gray-300 rounded-md bg-white text-gray-950 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1">
-                        Latest
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={deliveryEnd}
-                        onChange={(e) => setDeliveryEnd(e.target.value)}
-                        className="w-full px-3 py-1.5 border border-gray-300 rounded-md bg-white text-gray-950 focus:ring-2 focus:ring-blue-500 outline-none font-medium"
-                      />
-                    </div>
+              {/* RESTORED: Scheduling Windows */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50/40 p-5 rounded-xl border border-blue-100">
+                <div>
+                  <label className="block text-sm font-bold text-blue-900 mb-2">
+                    ⏰ Pickup Window Target
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      type="datetime-local"
+                      onChange={(e) => setPickupStart(e.target.value)}
+                      className="border border-blue-200 p-2.5 rounded-lg text-xs bg-white text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 w-full"
+                    />
+                    <input
+                      type="datetime-local"
+                      onChange={(e) => setPickupEnd(e.target.value)}
+                      className="border border-blue-200 p-2.5 rounded-lg text-xs bg-white text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 w-full"
+                    />
                   </div>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-gray-200 pt-4">
-                  <div className="flex flex-col gap-3">
-                    <h5 className="text-sm font-bold text-gray-600 uppercase tracking-wide mb-1">
-                      Site Equipment
-                    </h5>
-                    <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-gray-800 select-none">
-                      <input
-                        type="checkbox"
-                        checked={requiresLiftgate}
-                        onChange={(e) => setRequiresLiftgate(e.target.checked)}
-                        className="w-4 h-4 accent-blue-600"
-                      />{" "}
-                      Truck Needs Liftgate
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-gray-800 select-none">
-                      <input
-                        type="checkbox"
-                        checked={requiresLoadingDock}
-                        onChange={(e) =>
-                          setRequiresLoadingDock(e.target.checked)
-                        }
-                        className="w-4 h-4 accent-blue-600"
-                      />{" "}
-                      Site has Loading Dock
-                    </label>
+                <div>
+                  <label className="block text-sm font-bold text-blue-900 mb-2">
+                    ⏰ Delivery Window Target
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      type="datetime-local"
+                      onChange={(e) => setDeliveryStart(e.target.value)}
+                      className="border border-blue-200 p-2.5 rounded-lg text-xs bg-white text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 w-full"
+                    />
+                    <input
+                      type="datetime-local"
+                      onChange={(e) => setDeliveryEnd(e.target.value)}
+                      className="border border-blue-200 p-2.5 rounded-lg text-xs bg-white text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 w-full"
+                    />
                   </div>
+                </div>
+              </div>
+
+              {/* Equipment & Details */}
+              <div className="bg-gray-50 p-6 rounded-xl border border-gray-200 grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="flex flex-col gap-4">
+                  <label className="flex items-center gap-3 cursor-pointer font-bold text-gray-800">
+                    <input
+                      type="checkbox"
+                      checked={requiresLiftgate}
+                      onChange={(e) => setRequiresLiftgate(e.target.checked)}
+                      className="w-5 h-5 accent-gray-900"
+                    />
+                    Requires Liftgate
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer font-bold text-gray-800">
+                    <input
+                      type="checkbox"
+                      checked={requiresLoadingDock}
+                      onChange={(e) => setRequiresLoadingDock(e.target.checked)}
+                      className="w-5 h-5 accent-gray-900"
+                    />
+                    Site has Loading Dock
+                  </label>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">
+                    Driver Instructions
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Gate codes, special routes..."
+                    value={specialInstructions}
+                    onChange={(e) => setSpecialInstructions(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md font-medium text-sm resize-none"
+                  ></textarea>
+                </div>
+              </div>
+
+              {/* Advanced Pricing Engine Box */}
+              <div className="bg-white p-6 rounded-xl border-2 border-blue-200 shadow-sm flex flex-col gap-5">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-4 gap-4">
                   <div>
-                    <h5 className="text-sm font-bold text-gray-600 uppercase mb-2 tracking-wide">
-                      Driver Instructions
-                    </h5>
-                    <textarea
-                      rows={3}
-                      placeholder="Gate codes, warehouse contact details, loading instructions..."
-                      value={specialInstructions}
-                      onChange={(e) => setSpecialInstructions(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium text-sm resize-none shadow-xs"
-                    ></textarea>
+                    <h4 className="font-black text-xl text-gray-900">
+                      Budget Setup
+                    </h4>
+                    <p className="text-sm text-gray-500 font-medium mt-1">
+                      Use our AI to calculate a fair India-wide standard rate.
+                    </p>
                   </div>
+                  <button
+                    onClick={handleCalculatePrice}
+                    className="bg-gray-900 text-white font-bold py-2.5 px-6 rounded-lg hover:bg-black shadow-md transition-all whitespace-nowrap"
+                  >
+                    Calculate Fair Price 🧮
+                  </button>
+                </div>
+
+                {pricingBreakdown && (
+                  <div className="grid grid-cols-3 gap-4 text-center bg-blue-50 p-4 rounded-xl border border-blue-200 shadow-inner">
+                    <div>
+                      <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
+                        Distance
+                      </p>
+                      <p className="font-black text-xl text-blue-900">
+                        {pricingBreakdown.distance} km
+                      </p>
+                    </div>
+                    <div className="border-l border-r border-blue-200">
+                      <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
+                        Est. Time
+                      </p>
+                      <p className="font-black text-xl text-blue-900">
+                        {pricingBreakdown.days} Days
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
+                        Fleet
+                      </p>
+                      <p className="font-black text-xl text-blue-900">
+                        {pricingBreakdown.numTrucks} Trucks
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="relative mt-2">
+                  <label className="block text-sm font-black text-green-800 mb-2 uppercase tracking-wide">
+                    Your Target Budget (Seeker Ask)
+                  </label>
+                  <span className="absolute left-4 bottom-3 font-bold text-green-700 text-lg">
+                    ₹
+                  </span>
+                  <input
+                    type="number"
+                    value={seekerAsk}
+                    onChange={(e) => setSeekerAsk(e.target.value)}
+                    placeholder="e.g., 25000"
+                    required
+                    className="w-full pl-9 pr-4 py-3 border-2 border-green-300 rounded-lg font-black text-xl text-green-900 bg-green-50 focus:ring-0 focus:border-green-600 outline-none transition-colors"
+                  />
                 </div>
               </div>
 
-              {/* Pricing & Submit */}
-              <div className="bg-white p-5 rounded-lg border border-gray-200 shadow-inner flex flex-col md:flex-row items-center justify-between gap-4">
-                <div className="w-full md:w-1/2">
-                  {estimatedPrice ? (
-                    <div className="bg-green-50 border border-green-200 p-3 rounded-lg text-center shadow-xs animate-fade-in">
-                      <p className="text-xs text-green-700 font-semibold mb-1">
-                        Route Distance: {distance} km
-                      </p>
-                      <h4 className="text-lg font-extrabold text-green-800">
-                        Recommended Budget: ₹{estimatedPrice}
-                      </h4>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={handleCalculatePrice}
-                      className="w-full bg-gray-100 text-gray-800 font-bold py-3 px-4 rounded-md hover:bg-gray-200 border border-gray-300 transition-colors shadow-xs cursor-pointer text-sm"
-                    >
-                      Calculate Fair Market Price
-                    </button>
-                  )}
-                </div>
-                <button
-                  type="submit"
-                  className="w-full md:w-1/2 bg-blue-600 text-white font-bold py-4 px-6 rounded-md hover:bg-blue-700 transition-colors shadow-md text-lg cursor-pointer"
-                >
-                  Submit Manifest to Market
-                </button>
-              </div>
+              <button
+                type="submit"
+                className="w-full bg-blue-600 text-white font-black py-4 rounded-xl hover:bg-blue-700 transition-all shadow-lg hover:shadow-xl text-lg tracking-wide"
+              >
+                Publish Manifest to Live Market
+              </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* MODAL 2: JOB HISTORY */}
+      {/* ============================== */}
+      {/* Modal 2: History             */}
+      {/* ============================== */}
       {isHistoryModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col border border-gray-100">
-            <div className="p-6 border-b flex justify-between items-center bg-gray-50 rounded-t-xl">
-              <h3 className="text-xl font-bold text-gray-900">
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-2xl">
+              <h3 className="text-2xl font-black text-gray-900">
                 My Job Posting History
               </h3>
               <button
                 onClick={() => setIsHistoryModalOpen(false)}
-                className="text-gray-400 hover:text-red-500 font-bold text-2xl cursor-pointer"
+                className="text-gray-400 hover:text-red-500 font-bold text-3xl transition-colors"
               >
                 &times;
               </button>
             </div>
-            <div className="p-6 overflow-y-auto flex-grow space-y-6 bg-white">
+
+            <div className="p-6 overflow-y-auto flex-grow space-y-6">
               {myHistory.length === 0 ? (
-                <p className="text-center text-gray-500 py-8 font-medium">
-                  No jobs posted yet.
-                </p>
+                <div className="text-center py-10">
+                  <p className="text-gray-500 font-bold text-lg">
+                    No jobs posted yet.
+                  </p>
+                </div>
               ) : (
                 myHistory.map((job: any) => (
                   <div
                     key={job.id}
-                    className="border border-gray-200 bg-white rounded-xl shadow-xs overflow-hidden"
+                    className="border border-gray-200 rounded-xl overflow-hidden shadow-sm"
                   >
-                    <div className="bg-gray-50 px-5 py-3 border-b border-gray-100 flex justify-between items-center">
+                    <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex justify-between items-center">
                       <div>
-                        <h4 className="font-bold text-lg text-gray-900">
-                          {job.origin} ➔ {job.destination}
+                        <h4 className="font-black text-lg text-gray-900">
+                          {job.origin.split(",")[0]} ➔{" "}
+                          {job.destination.split(",")[0]}
                         </h4>
-                        <p className="text-xs text-gray-500 font-medium">
-                          Weight: {job.weight_kg}kg
-                        </p>
                       </div>
                       <span
-                        className={`text-xs font-bold px-2 py-1 rounded uppercase ${job.status === "open" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"}`}
+                        className={`text-xs font-black px-3 py-1.5 rounded-full uppercase tracking-wider ${job.status === "open" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"}`}
                       >
                         {job.status}
                       </span>
                     </div>
-                    <div className="p-4 bg-white">
-                      <h5 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
-                        Bids ({job.bids.length})
+
+                    <div className="p-5">
+                      <h5 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
+                        Received Bids ({job.bids.length})
                       </h5>
-                      {job.bids.length === 0 ? (
-                        <p className="text-sm text-gray-400 italic">
-                          No bids received yet.
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {job.bids.map((bid: any) => (
+                      <div className="space-y-3">
+                        {job.bids.length === 0 ? (
+                          <p className="text-sm text-gray-400 font-medium italic">
+                            Waiting for providers to bid...
+                          </p>
+                        ) : (
+                          job.bids.map((bid: any) => (
                             <div
                               key={bid.bid_id}
-                              className={`flex justify-between items-center p-3 rounded-lg border ${bid.status === "accepted" ? "bg-green-50 border-green-200" : "bg-white border-gray-100"}`}
+                              className="flex justify-between items-center p-4 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 transition-colors"
                             >
                               <div>
-                                <p className="font-bold text-sm text-gray-900">
+                                <p className="font-bold text-gray-900">
                                   {bid.provider_name}
                                 </p>
-                                <p className="text-xs text-gray-500">
-                                  {bid.provider_email}
+                                <p className="text-xs text-yellow-600 font-bold mt-1">
+                                  ⭐{" "}
+                                  {bid.rating_sum > 0
+                                    ? (
+                                        bid.rating_sum / bid.rating_count
+                                      ).toFixed(1)
+                                    : "New"}
                                 </p>
                               </div>
                               <div className="flex items-center gap-4">
-                                <span className="text-lg font-extrabold text-green-600">
+                                <span className="text-xl font-black text-green-600">
                                   ₹{bid.amount}
                                 </span>
                                 {job.status === "open" && (
                                   <button
                                     onClick={() => handleAcceptBid(bid.bid_id)}
-                                    className="bg-green-600 text-white text-xs px-3 py-1.5 rounded font-bold hover:bg-green-700 shadow-xs cursor-pointer"
+                                    className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-700 shadow-sm transition-colors"
                                   >
                                     Accept
                                   </button>
                                 )}
                                 {bid.status === "accepted" && (
-                                  <span className="bg-green-200 text-green-800 text-xs font-bold px-2 py-1 rounded">
+                                  <span className="bg-green-100 border border-green-300 text-green-800 text-xs font-black px-3 py-1.5 rounded-full">
                                     WINNER
                                   </span>
                                 )}
                               </div>
                             </div>
-                          ))}
-                        </div>
-                      )}
+                          ))
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))
