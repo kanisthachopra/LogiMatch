@@ -1,11 +1,17 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { apiUrl, authHeaders } from "@/lib/api";
 
 // ==========================================
 // 1. DRIVER TRACKING CARD COMPONENT
 // ==========================================
-function DriverTrackingCard({ job, handleUpdateLocation, formatDate }: any) {
+function DriverTrackingCard({
+  job,
+  handleUpdateLocation,
+  handleDownloadManifest,
+  formatDate,
+}: any) {
   const [locationText, setLocationText] = useState("");
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [isTyping, setIsTyping] = useState(false);
@@ -58,6 +64,12 @@ function DriverTrackingCard({ job, handleUpdateLocation, formatDate }: any) {
             <p className="text-2xl font-black text-green-600 mt-2">
               Payout: ₹{job.winning_bid}
             </p>
+            <button
+              onClick={() => handleDownloadManifest(job.job_id)}
+              className="mt-3 bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 px-4 py-2 rounded-lg font-black text-xs transition-colors"
+            >
+              Download Manifest
+            </button>
           </div>
         </div>
 
@@ -222,6 +234,136 @@ function DriverTrackingCard({ job, handleUpdateLocation, formatDate }: any) {
   );
 }
 
+function StatCard({ label, value, tone = "blue" }: any) {
+  const toneClass =
+    tone === "green"
+      ? "bg-green-50 text-green-800 border-green-100"
+      : tone === "yellow"
+        ? "bg-yellow-50 text-yellow-800 border-yellow-100"
+        : "bg-blue-50 text-blue-800 border-blue-100";
+
+  return (
+    <div className={`rounded-xl border p-5 ${toneClass}`}>
+      <p className="text-xs font-black uppercase tracking-widest opacity-75">
+        {label}
+      </p>
+      <p className="text-3xl font-black mt-2">{value}</p>
+    </div>
+  );
+}
+
+function BarList({ title, rows, valueKey, labelKey = "count", money = false }: any) {
+  const max = Math.max(
+    1,
+    ...rows.map((row: any) => Number(row[valueKey] || row[labelKey] || 0)),
+  );
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+      <h4 className="text-lg font-black text-gray-900 mb-4">{title}</h4>
+      {rows.length === 0 ? (
+        <p className="text-sm font-bold text-gray-500">No data yet.</p>
+      ) : (
+        <div className="space-y-4">
+          {rows.map((row: any, index: number) => {
+            const value = Number(row[valueKey] || row[labelKey] || 0);
+            const routeLabel = row.origin
+              ? `${row.origin.split(",")[0]} to ${row.destination.split(",")[0]}`
+              : row.status;
+
+            return (
+              <div key={`${routeLabel}-${index}`}>
+                <div className="flex justify-between gap-3 text-sm font-bold mb-1">
+                  <span className="text-gray-800 truncate">{routeLabel}</span>
+                  <span className="text-gray-600 whitespace-nowrap">
+                    {money
+                      ? `₹${Math.round(value).toLocaleString("en-IN")}`
+                      : value}
+                  </span>
+                </div>
+                <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 rounded-full"
+                    style={{ width: `${Math.max((value / max) * 100, 6)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InsightsPanel({ insights }: any) {
+  const money = (value: number | string) =>
+    `₹${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
+
+  if (!insights) {
+    return (
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+        <p className="text-gray-500 font-bold">Insights are loading...</p>
+      </div>
+    );
+  }
+
+  const summary = insights.summary || {};
+  const isSeeker = insights.role === "seeker";
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {isSeeker ? (
+          <>
+            <StatCard label="Posted Jobs" value={summary.total_jobs || 0} />
+            <StatCard label="Awarded Jobs" value={summary.awarded_jobs || 0} />
+            <StatCard
+              label="Total Spend"
+              value={money(summary.total_spend)}
+              tone="green"
+            />
+            <StatCard
+              label="Avg Accepted"
+              value={money(summary.average_accepted_price)}
+              tone="yellow"
+            />
+          </>
+        ) : (
+          <>
+            <StatCard label="Bids Placed" value={summary.total_bids || 0} />
+            <StatCard label="Bids Won" value={summary.won_bids || 0} />
+            <StatCard
+              label="Win Rate"
+              value={`${Number(summary.win_rate || 0)}%`}
+              tone="yellow"
+            />
+            <StatCard
+              label="Earnings"
+              value={money(summary.total_earnings)}
+              tone="green"
+            />
+          </>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <BarList
+          title={isSeeker ? "Route Spend Benchmarks" : "Route Bid Patterns"}
+          rows={insights.routes || []}
+          valueKey={isSeeker ? "average_price" : "average_bid"}
+          money
+        />
+        <BarList
+          title={isSeeker ? "Shipment Status Mix" : "Bid Status Mix"}
+          rows={insights.statuses || []}
+          valueKey="count"
+        />
+      </div>
+    </div>
+  );
+}
+
 // ==========================================
 // 2. MAIN PROFILE PAGE
 // ==========================================
@@ -232,6 +374,7 @@ export default function ProfilePage() {
   const [myJobs, setMyJobs] = useState([]);
   const [wonJobs, setWonJobs] = useState([]);
   const [activeBids, setActiveBids] = useState([]);
+  const [insights, setInsights] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const [bio, setBio] = useState("");
@@ -255,12 +398,13 @@ export default function ProfilePage() {
 
         const headers = { Authorization: `Bearer ${token}` };
 
-        const [profileRes, myJobsRes, wonJobsRes, activeBidsRes] =
+        const [profileRes, myJobsRes, wonJobsRes, activeBidsRes, insightsRes] =
           await Promise.all([
-            fetch("http://localhost:5000/api/users/me", { headers }),
-            fetch("http://localhost:5000/api/profile/my-jobs", { headers }),
-            fetch("http://localhost:5000/api/profile/won-jobs", { headers }),
-            fetch("http://localhost:5000/api/profile/active-bids", { headers }),
+            fetch(apiUrl("/api/users/me"), { headers }),
+            fetch(apiUrl("/api/profile/my-jobs"), { headers }),
+            fetch(apiUrl("/api/profile/won-jobs"), { headers }),
+            fetch(apiUrl("/api/profile/active-bids"), { headers }),
+            fetch(apiUrl("/api/insights/summary"), { headers }),
           ]);
 
         if (profileRes.status === 401) {
@@ -274,6 +418,9 @@ export default function ProfilePage() {
         setMyJobs(await myJobsRes.json());
         setWonJobs(await wonJobsRes.json());
         setActiveBids(await activeBidsRes.json());
+        if (insightsRes.ok) {
+          setInsights(await insightsRes.json());
+        }
 
         setBio(profileData.bio || "");
         setCompanyName(profileData.company_name || "");
@@ -295,10 +442,33 @@ export default function ProfilePage() {
     window.location.href = "/";
   };
 
+  const handleDownloadManifest = async (jobId: string | number) => {
+    try {
+      const response = await fetch(apiUrl(`/api/jobs/${jobId}/manifest.pdf`), {
+        headers: authHeaders(),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        return alert(data.error || "Manifest is available after bid acceptance.");
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `logimatch-manifest-${jobId}.pdf`;
+      link.click();
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error(error);
+      alert("Could not download manifest.");
+    }
+  };
+
   const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("http://localhost:5000/api/users/profile", {
+      const response = await fetch(apiUrl("/api/users/profile"), {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -324,7 +494,7 @@ export default function ProfilePage() {
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("http://localhost:5000/api/users/password", {
+      const response = await fetch(apiUrl("/api/users/password"), {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -355,7 +525,7 @@ export default function ProfilePage() {
     }
     try {
       const response = await fetch(
-        `http://localhost:5000/api/jobs/${jobId}/track`,
+        apiUrl(`/api/jobs/${jobId}/track`),
         {
           method: "PUT",
           headers: {
@@ -378,7 +548,7 @@ export default function ProfilePage() {
     if (!confirm(`Submit a ${score}-Star rating for this driver?`)) return;
     try {
       const response = await fetch(
-        `http://localhost:5000/api/users/${providerId}/rate`,
+        apiUrl(`/api/users/${providerId}/rate`),
         {
           method: "POST",
           headers: {
@@ -507,6 +677,12 @@ export default function ProfilePage() {
             className={`pb-4 font-bold text-sm sm:text-base transition-all whitespace-nowrap ${activeTab === "dispatch" ? "border-b-4 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-900"}`}
           >
             📍 Freight & Dispatch Tracker
+          </button>
+          <button
+            onClick={() => setActiveTab("insights")}
+            className={`pb-4 font-bold text-sm sm:text-base transition-all whitespace-nowrap ${activeTab === "insights" ? "border-b-4 border-blue-600 text-blue-600" : "text-gray-500 hover:text-gray-900"}`}
+          >
+            Market Insights
           </button>
           <button
             onClick={() => setActiveTab("profile")}
@@ -669,6 +845,8 @@ export default function ProfilePage() {
           </div>
         )}
 
+        {activeTab === "insights" && <InsightsPanel insights={insights} />}
+
         {/* TAB 3: FREIGHT & DISPATCH TRACKER */}
         {activeTab === "dispatch" && (
           <div className="space-y-12 animate-fade-in">
@@ -737,6 +915,14 @@ export default function ProfilePage() {
                                         )}{" "}
                                         ({winningBid.rating_count} Reviews)
                                       </p>
+                                      <button
+                                        onClick={() =>
+                                          handleDownloadManifest(job.id)
+                                        }
+                                        className="block mt-4 bg-blue-600 text-white font-black px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-xs"
+                                      >
+                                        Download Manifest
+                                      </button>
                                     </div>
                                     <div className="border-l-0 md:border-l-2 border-gray-200 md:pl-6 flex flex-col justify-center">
                                       <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
@@ -873,6 +1059,7 @@ export default function ProfilePage() {
                           key={`wonjob-${job.job_id}-${index}`}
                           job={job}
                           handleUpdateLocation={handleUpdateLocation}
+                          handleDownloadManifest={handleDownloadManifest}
                           formatDate={formatDate}
                         />
                       ))}

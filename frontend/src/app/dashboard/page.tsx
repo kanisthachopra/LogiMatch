@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { apiUrl } from "@/lib/api";
 
 // ==========================================
 // 1. THE JOB CARD COMPONENT
@@ -18,7 +19,7 @@ function JobCard({
 
   const handleBidSubmit = async () => {
     try {
-      const response = await fetch("http://localhost:5000/api/bids", {
+      const response = await fetch(apiUrl("/api/bids"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -217,6 +218,7 @@ function JobCard({
                       <img
                         src={bid.provider_photo}
                         className="w-full h-full object-cover"
+                        alt={`${bid.provider_name} profile`}
                       />
                     ) : (
                       <span className="flex items-center justify-center w-full h-full text-sm">
@@ -287,6 +289,7 @@ export default function UnifiedDashboardPage() {
   const [myHistory, setMyHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
 
   const [isPostModalOpen, setIsPostModalOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
@@ -332,6 +335,7 @@ export default function UnifiedDashboardPage() {
 
   useEffect(() => {
     setCurrentUserId(localStorage.getItem("userId"));
+    setCurrentUserRole(localStorage.getItem("userRole"));
 
     const fetchData = async () => {
       try {
@@ -339,14 +343,14 @@ export default function UnifiedDashboardPage() {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         };
 
-        const jobsRes = await fetch("http://localhost:5000/api/jobs");
+        const jobsRes = await fetch(apiUrl("/api/jobs"));
         if (jobsRes.ok) {
           setJobs(await jobsRes.json());
         }
 
         if (localStorage.getItem("token")) {
           const historyRes = await fetch(
-            "http://localhost:5000/api/profile/my-jobs",
+            apiUrl("/api/profile/my-jobs"),
             { headers },
           );
           if (historyRes.ok) {
@@ -362,6 +366,8 @@ export default function UnifiedDashboardPage() {
 
     fetchData();
   }, []);
+
+  const isSeeker = currentUserRole === "seeker";
 
   // Debounced Autocomplete (Origin)
   useEffect(() => {
@@ -413,24 +419,33 @@ export default function UnifiedDashboardPage() {
     setDestSuggestions([]);
   };
 
+  const optionalNumber = (value: string) => {
+    const parsed = Number(value);
+    return value.trim() === "" || !Number.isFinite(parsed) ? null : parsed;
+  };
+
   // AI Pricing Engine Handler
   const handleCalculatePrice = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (!origin || !destination || !weight) {
       return alert("Fill in Origin, Destination, and Weight first!");
     }
+    setIsTypingOrigin(false);
+    setIsTypingDest(false);
+    setOriginSuggestions([]);
+    setDestSuggestions([]);
 
     try {
-      const response = await fetch("http://localhost:5000/api/price-estimate", {
+      const response = await fetch(apiUrl("/api/price-estimate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           originCity: origin,
           destCity: destination,
           weight: Number(weight),
-          length_cm: Number(length),
-          width_cm: Number(width),
-          height_cm: Number(height),
+          length_cm: optionalNumber(length),
+          width_cm: optionalNumber(width),
+          height_cm: optionalNumber(height),
           packaging_type: packagingType,
           is_fragile: isFragile,
           is_hazmat: isHazmat,
@@ -461,9 +476,9 @@ export default function UnifiedDashboardPage() {
         destination,
         weight_kg: Number(weight),
         seeker_ask: Number(seekerAsk),
-        length_cm: Number(length),
-        width_cm: Number(width),
-        height_cm: Number(height),
+        length_cm: optionalNumber(length),
+        width_cm: optionalNumber(width),
+        height_cm: optionalNumber(height),
         packaging_type: packagingType,
         is_fragile: isFragile,
         is_hazmat: isHazmat,
@@ -477,7 +492,7 @@ export default function UnifiedDashboardPage() {
         special_instructions: specialInstructions,
       };
 
-      const response = await fetch("http://localhost:5000/api/jobs", {
+      const response = await fetch(apiUrl("/api/jobs"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -502,7 +517,7 @@ export default function UnifiedDashboardPage() {
       return;
     try {
       const response = await fetch(
-        `http://localhost:5000/api/bids/${bidId}/accept`,
+        apiUrl(`/api/bids/${bidId}/accept`),
         {
           method: "PUT",
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
@@ -550,7 +565,8 @@ export default function UnifiedDashboardPage() {
             <h1 className="text-2xl font-extrabold text-blue-600 tracking-tight">
               LogiMatch
             </h1>
-            <div className="hidden sm:flex gap-3 ml-4 border-l pl-6 border-gray-200">
+            {isSeeker && (
+              <div className="hidden sm:flex gap-3 ml-4 border-l pl-6 border-gray-200">
               <button
                 onClick={() => setIsPostModalOpen(true)}
                 className="flex items-center gap-2 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg shadow-sm hover:bg-blue-700 transition-colors text-sm"
@@ -563,7 +579,8 @@ export default function UnifiedDashboardPage() {
               >
                 📜 Job History
               </button>
-            </div>
+              </div>
+            )}
           </div>
           <Link
             href="/profile"
@@ -572,6 +589,22 @@ export default function UnifiedDashboardPage() {
             👤 My Profile
           </Link>
         </div>
+        {isSeeker && (
+          <div className="sm:hidden border-t border-gray-100 px-4 py-3 flex gap-3">
+            <button
+              onClick={() => setIsPostModalOpen(true)}
+              className="flex-1 bg-blue-600 text-white font-bold py-2 px-3 rounded-lg shadow-sm hover:bg-blue-700 transition-colors text-sm"
+            >
+              Post Job
+            </button>
+            <button
+              onClick={() => setIsHistoryModalOpen(true)}
+              className="flex-1 bg-white text-gray-700 font-bold py-2 px-3 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors text-sm"
+            >
+              History
+            </button>
+          </div>
+        )}
       </nav>
 
       {/* ============================== */}
@@ -960,30 +993,58 @@ export default function UnifiedDashboardPage() {
                 </div>
 
                 {pricingBreakdown && (
-                  <div className="grid grid-cols-3 gap-4 text-center bg-blue-50 p-4 rounded-xl border border-blue-200 shadow-inner">
-                    <div>
+                  <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 shadow-inner space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
+                      <div>
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
+                          Conservative
+                        </p>
+                        <p className="font-black text-xl text-blue-900">
+                          ₹{pricingBreakdown.recommendedRange?.low}
+                        </p>
+                      </div>
+                      <div className="border-y sm:border-y-0 sm:border-x border-blue-200 py-3 sm:py-0">
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
+                          Fair Ask
+                        </p>
+                        <p className="font-black text-2xl text-green-700">
+                          ₹{pricingBreakdown.recommendedRange?.fair}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
+                          Upper Range
+                        </p>
+                        <p className="font-black text-xl text-blue-900">
+                          ₹{pricingBreakdown.recommendedRange?.high}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4 text-center bg-white rounded-lg border border-blue-100 p-3">
+                      <div>
                       <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
                         Distance
                       </p>
                       <p className="font-black text-xl text-blue-900">
                         {pricingBreakdown.distance} km
                       </p>
-                    </div>
-                    <div className="border-l border-r border-blue-200">
+                      </div>
+                      <div className="border-l border-r border-blue-100">
                       <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
                         Est. Time
                       </p>
                       <p className="font-black text-xl text-blue-900">
                         {pricingBreakdown.days} Days
                       </p>
-                    </div>
-                    <div>
+                      </div>
+                      <div>
                       <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
                         Fleet
                       </p>
                       <p className="font-black text-xl text-blue-900">
                         {pricingBreakdown.numTrucks} Trucks
                       </p>
+                      </div>
                     </div>
                   </div>
                 )}

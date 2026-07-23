@@ -6,13 +6,67 @@ const pool = require("./db");
 const haversine = require("haversine");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
+const PDFDocument = require("pdfkit");
 require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    },
+  }),
+);
 app.use(express.json());
+
+const priceConfig = {
+  dieselPricePerLitre: Number(process.env.PRICE_DIESEL_PER_LITRE || 95),
+  fuelEfficiencyKmPerLitre: Number(process.env.PRICE_FUEL_EFFICIENCY || 4),
+  kmPerDay: Number(process.env.PRICE_KM_PER_DAY || 300),
+  driverCostPerDay: Number(process.env.PRICE_DRIVER_COST_PER_DAY || 1500),
+  truckVolumeCm3: Number(process.env.PRICE_TRUCK_VOLUME_CM3 || 40 * 1000000),
+  truckMaxPayloadKg: Number(process.env.PRICE_TRUCK_MAX_PAYLOAD_KG || 15000),
+  densityKgPerM3: Number(process.env.PRICE_DENSITY_KG_PER_M3 || 250),
+  lowRangeMultiplier: Number(process.env.PRICE_LOW_RANGE_MULTIPLIER || 0.9),
+  highRangeMultiplier: Number(process.env.PRICE_HIGH_RANGE_MULTIPLIER || 1.15),
+};
+
+const packagingSurcharge = {
+  Palletized: 0,
+  Boxed: 0,
+  Crated: 0.03,
+  Drums: 0.05,
+  Loose: -0.03,
+};
+
+const coordinateCache = new Map();
+
+const roundMoney = (value) => Math.round(Number(value || 0));
+
+const formatDateForManifest = (value) => {
+  if (!value) return "TBD";
+  return new Date(value).toLocaleString("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Kolkata",
+  });
+};
+
+const addManifestRow = (doc, label, value) => {
+  doc.font("Helvetica-Bold").text(label, { continued: true });
+  doc.font("Helvetica").text(` ${value || "Not specified"}`);
+};
 
 // ---------------------------------
 // Middleware: The JWT Bouncer
@@ -302,6 +356,14 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
     } = req.body;
 
     const seeker_id = req.user.id;
+    if (req.user.role !== "seeker") {
+      return res.status(403).json({ error: "Only seekers can post jobs." });
+    }
+    if (!origin || !destination || Number(weight_kg) <= 0) {
+      return res.status(400).json({
+        error: "Origin, destination, and a positive cargo weight are required.",
+      });
+    }
 
     const final_length = length_cm || length || null;
     const final_width = width_cm || width || null;
@@ -346,7 +408,7 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
     );
     const driverEmails = drivers.rows.map((d) => d.email).join(",");
 
-    if (driverEmails) {
+    if (driverEmails && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
       await transporter.sendMail({
         from: `"LogiMatch Market" <${process.env.EMAIL_USER}>`,
         bcc: driverEmails,
@@ -382,82 +444,124 @@ app.post("/api/price-estimate", async (req, res) => {
       requires_loading_dock,
     } = req.body;
 
-    const DIESEL_PRICE = 95;
-    const FUEL_EFFICIENCY = 4;
-    const FUEL_COST_PER_KM = DIESEL_PRICE / FUEL_EFFICIENCY;
-    const KM_PER_DAY = 300;
-    const DRIVER_COST_PER_DAY = 1500;
-    const TRUCK_VOLUME_CM3 = 40 * 1000000;
-    const TRUCK_MAX_PAYLOAD_KG = 15000;
+    const numericWeight = Number(weight);
+    const dimensions = [length_cm, width_cm, height_cm].map((value) =>
+      value === "" || value === undefined || value === null ? null : Number(value),
+    );
 
-    const PACKAGING_SURCHARGE = {
-      Palletized: 0.0,
-      Boxed: 0.0,
-      Crated: 0.03,
-      Drums: 0.05,
-      Loose: -0.03,
-    };
+    if (!originCity || !destCity) {
+      return res
+        .status(400)
+        .json({ error: "Origin and destination cities are required." });
+    }
+
+    if (!Number.isFinite(numericWeight) || numericWeight <= 0) {
+      return res
+        .status(400)
+        .json({ error: "Cargo weight must be a positive number." });
+    }
+
+    if (
+      dimensions.some((value) => value !== null && (!Number.isFinite(value) || value <= 0))
+    ) {
+      return res
+        .status(400)
+        .json({ error: "Cargo dimensions must be positive numbers." });
+    }
+
+    if (!packagingSurcharge.hasOwnProperty(packaging_type || "Palletized")) {
+      return res.status(400).json({ error: "Unsupported packaging type." });
+    }
 
     const getCoords = async (city) => {
+      const normalizedCity = city.trim().toLowerCase();
+      if (coordinateCache.has(normalizedCity)) {
+        return coordinateCache.get(normalizedCity);
+      }
+
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${city},India&format=json`,
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)},India&format=json&limit=1`,
         { headers: { "User-Agent": "LogiMatch/1.0" } },
       );
       const data = await response.json();
       if (!data || data.length === 0)
         throw new Error(`Location not found: ${city}`);
-      return {
+      const coords = {
         latitude: parseFloat(data[0].lat),
         longitude: parseFloat(data[0].lon),
       };
+      coordinateCache.set(normalizedCity, coords);
+      return coords;
     };
 
     const originCoords = await getCoords(originCity);
     const destCoords = await getCoords(destCity);
     const distanceKm = haversine(originCoords, destCoords, { unit: "km" });
 
-    const fuelCost = FUEL_COST_PER_KM * distanceKm;
-    const daysNeeded = Math.ceil(distanceKm / KM_PER_DAY);
-    const driverCost = daysNeeded * DRIVER_COST_PER_DAY;
+    const fuelCostPerKm =
+      priceConfig.dieselPricePerLitre / priceConfig.fuelEfficiencyKmPerLitre;
+    const fuelCost = fuelCostPerKm * distanceKm;
+    const daysNeeded = Math.max(Math.ceil(distanceKm / priceConfig.kmPerDay), 1);
+    const driverCost = daysNeeded * priceConfig.driverCostPerDay;
 
     let cargoVolumeCm3;
-    if (length_cm && width_cm && height_cm) {
-      cargoVolumeCm3 = length_cm * width_cm * height_cm;
+    if (dimensions.every((value) => value !== null)) {
+      cargoVolumeCm3 = dimensions[0] * dimensions[1] * dimensions[2];
     } else {
-      const estimatedM3 = weight / 250;
+      const estimatedM3 = numericWeight / priceConfig.densityKgPerM3;
       cargoVolumeCm3 = estimatedM3 * 1000000;
     }
 
-    const trucksByVolume = Math.ceil(cargoVolumeCm3 / TRUCK_VOLUME_CM3);
-    const trucksByWeight = Math.ceil(weight / TRUCK_MAX_PAYLOAD_KG);
+    const trucksByVolume = Math.ceil(cargoVolumeCm3 / priceConfig.truckVolumeCm3);
+    const trucksByWeight = Math.ceil(numericWeight / priceConfig.truckMaxPayloadKg);
     const numTrucks = Math.max(trucksByVolume, trucksByWeight, 1);
 
     const baseCostPerTruck = fuelCost + driverCost;
-    let totalCost = baseCostPerTruck * numTrucks;
+    const baseCost = baseCostPerTruck * numTrucks;
+    let totalCost = baseCost;
+    let riskMultiplier = 1;
+    let equipmentCost = 0;
 
-    if (is_fragile) totalCost *= 1.1;
-    if (is_hazmat) totalCost *= 1.25;
-    if (requires_refrigeration) totalCost *= 1.5;
-    if (requires_liftgate) totalCost += 3000 * numTrucks;
-    if (requires_loading_dock) totalCost += 1500 * numTrucks;
+    if (is_fragile) riskMultiplier *= 1.1;
+    if (is_hazmat) riskMultiplier *= 1.25;
+    if (requires_refrigeration) riskMultiplier *= 1.5;
+    totalCost *= riskMultiplier;
 
-    const packagingSurcharge = PACKAGING_SURCHARGE[packaging_type] || 0;
-    totalCost *= 1 + packagingSurcharge;
+    if (requires_liftgate) equipmentCost += 3000 * numTrucks;
+    if (requires_loading_dock) equipmentCost += 1500 * numTrucks;
+    totalCost += equipmentCost;
+
+    const packagingRate = packagingSurcharge[packaging_type || "Palletized"];
+    totalCost *= 1 + packagingRate;
+    const low = totalCost * priceConfig.lowRangeMultiplier;
+    const high = totalCost * priceConfig.highRangeMultiplier;
 
     res.status(200).json({
       distance: Math.round(distanceKm),
       days: daysNeeded,
       numTrucks: numTrucks,
       price: Math.round(totalCost),
+      recommendedRange: {
+        low: Math.round(low),
+        fair: Math.round(totalCost),
+        high: Math.round(high),
+      },
       breakdown: {
-        fuelCost: Math.round(fuelCost * numTrucks),
-        driverCost: Math.round(driverCost * numTrucks),
-        surcharges: Math.round(totalCost - baseCostPerTruck * numTrucks),
+        fuelCost: roundMoney(fuelCost * numTrucks),
+        driverCost: roundMoney(driverCost * numTrucks),
+        baseCost: roundMoney(baseCost),
+        riskSurcharge: roundMoney(baseCost * riskMultiplier - baseCost),
+        equipmentCost: roundMoney(equipmentCost),
+        packagingSurcharge: roundMoney(totalCost - (baseCost * riskMultiplier + equipmentCost)),
+        totalSurcharges: roundMoney(totalCost - baseCost),
       },
     });
   } catch (error) {
     console.error("Price estimate error:", error.message);
-    res.status(500).json({ error: "Failed to calculate price estimate" });
+    const isLocationError = error.message.includes("Location not found");
+    res
+      .status(isLocationError ? 404 : 500)
+      .json({ error: isLocationError ? error.message : "Failed to calculate price estimate" });
   }
 });
 
@@ -529,10 +633,32 @@ app.post("/api/bids", verifyToken, async (req, res) => {
   try {
     const { job_id, amount } = req.body;
     const provider_id = req.user.id;
+    const numericAmount = Number(amount);
+
+    if (req.user.role !== "driver") {
+      return res.status(403).json({ error: "Only providers can submit bids." });
+    }
+    if (!job_id || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ error: "A positive bid amount is required." });
+    }
+
+    const jobResult = await pool.query(
+      "SELECT seeker_id, status FROM jobs WHERE id = $1",
+      [job_id],
+    );
+    if (jobResult.rows.length === 0) {
+      return res.status(404).json({ error: "Job not found." });
+    }
+    if (jobResult.rows[0].seeker_id === provider_id) {
+      return res.status(403).json({ error: "You cannot bid on your own job." });
+    }
+    if (jobResult.rows[0].status !== "open") {
+      return res.status(400).json({ error: "Job is no longer open." });
+    }
 
     const newBid = await pool.query(
       "INSERT INTO bids (job_id, provider_id, amount) VALUES ($1, $2, $3) RETURNING *",
-      [job_id, provider_id, amount],
+      [job_id, provider_id, numericAmount],
     );
 
     // 🚀 RESTORED: Alert Seeker of New Bid
@@ -541,16 +667,18 @@ app.post("/api/bids", verifyToken, async (req, res) => {
 
     if (seekerResult.rows.length > 0) {
       const seeker = seekerResult.rows[0];
-      await transporter.sendMail({
+      if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+        await transporter.sendMail({
         from: `"LogiMatch Market" <${process.env.EMAIL_USER}>`,
         to: seeker.email,
-        subject: `New Bid Received! (₹${amount})`,
+        subject: `New Bid Received! (₹${numericAmount})`,
         html: `
           <h2>Hello ${seeker.name},</h2>
-          <p>You just received a new bid of <b>₹${amount}</b> for your cargo from ${seeker.origin} to ${seeker.destination}.</p>
+          <p>You just received a new bid of <b>₹${numericAmount}</b> for your cargo from ${seeker.origin} to ${seeker.destination}.</p>
           <p>Log in to your Profile to review and accept the offer.</p>
         `,
-      });
+        });
+      }
     }
 
     res.status(201).json(newBid.rows[0]);
@@ -566,19 +694,47 @@ app.post("/api/bids", verifyToken, async (req, res) => {
 app.put("/api/bids/:id/accept", verifyToken, async (req, res) => {
   try {
     const bidId = req.params.id;
-    await pool.query("UPDATE bids SET status = $1 WHERE id = $2", [
-      "accepted",
-      bidId,
-    ]);
     const bidResult = await pool.query(
-      "SELECT job_id FROM bids WHERE id = $1",
+      `SELECT b.id, b.job_id, b.provider_id, b.amount, j.seeker_id, j.status AS job_status
+       FROM bids b
+       JOIN jobs j ON b.job_id = j.id
+       WHERE b.id = $1`,
       [bidId],
     );
-    const jobId = bidResult.rows[0].job_id;
-    await pool.query("UPDATE jobs SET status = $1 WHERE id = $2", [
-      "assigned",
-      jobId,
-    ]);
+    if (bidResult.rows.length === 0) {
+      return res.status(404).json({ error: "Bid not found." });
+    }
+
+    const bid = bidResult.rows[0];
+    if (bid.seeker_id !== req.user.id) {
+      return res.status(403).json({ error: "Only the job seeker can accept this bid." });
+    }
+    if (bid.job_status !== "open") {
+      return res.status(400).json({ error: "Job is no longer open." });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const jobUpdate = await client.query(
+        "UPDATE jobs SET status = $1, current_location = COALESCE(current_location, origin) WHERE id = $2 AND status = 'open'",
+        ["assigned", bid.job_id],
+      );
+      if (jobUpdate.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "Job is no longer open." });
+      }
+      await client.query(
+        "UPDATE bids SET status = CASE WHEN id = $1 THEN 'accepted' ELSE 'rejected' END WHERE job_id = $2",
+        [bidId, bid.job_id],
+      );
+      await client.query("COMMIT");
+    } catch (transactionError) {
+      await client.query("ROLLBACK");
+      throw transactionError;
+    } finally {
+      client.release();
+    }
 
     res.status(200).json({ message: "Bid accepted and job assigned!" });
   } catch (error) {
@@ -822,11 +978,276 @@ app.get("/api/profile/won-jobs", verifyToken, async (req, res) => {
   }
 });
 
+// ---------------------------------
+// Route: History Analysis & Market Insights
+// ---------------------------------
+app.get("/api/insights/summary", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role === "seeker") {
+      const [summaryResult, routeResult, statusResult] = await Promise.all([
+        pool.query(
+          `SELECT
+             COUNT(*)::int AS total_jobs,
+             COUNT(*) FILTER (WHERE j.status IN ('assigned', 'picked_up', 'delivered'))::int AS awarded_jobs,
+             COUNT(*) FILTER (WHERE j.status = 'delivered')::int AS completed_jobs,
+             COALESCE(SUM(b.amount) FILTER (WHERE b.status = 'accepted'), 0)::numeric AS total_spend,
+             COALESCE(AVG(b.amount) FILTER (WHERE b.status = 'accepted'), 0)::numeric AS average_accepted_price
+           FROM jobs j
+           LEFT JOIN bids b ON b.job_id = j.id
+           WHERE j.seeker_id = $1`,
+          [req.user.id],
+        ),
+        pool.query(
+          `SELECT
+             j.origin,
+             j.destination,
+             COUNT(*)::int AS job_count,
+             COALESCE(AVG(b.amount) FILTER (WHERE b.status = 'accepted'), 0)::numeric AS average_price
+           FROM jobs j
+           LEFT JOIN bids b ON b.job_id = j.id
+           WHERE j.seeker_id = $1
+           GROUP BY j.origin, j.destination
+           ORDER BY job_count DESC, average_price DESC
+           LIMIT 6`,
+          [req.user.id],
+        ),
+        pool.query(
+          `SELECT status, COUNT(*)::int AS count
+           FROM jobs
+           WHERE seeker_id = $1
+           GROUP BY status
+           ORDER BY count DESC`,
+          [req.user.id],
+        ),
+      ]);
+
+      return res.status(200).json({
+        role: "seeker",
+        summary: summaryResult.rows[0],
+        routes: routeResult.rows,
+        statuses: statusResult.rows,
+      });
+    }
+
+    const [summaryResult, routeResult, statusResult] = await Promise.all([
+      pool.query(
+        `SELECT
+           COUNT(*)::int AS total_bids,
+           COUNT(*) FILTER (WHERE b.status = 'accepted')::int AS won_bids,
+           COALESCE(SUM(b.amount) FILTER (WHERE b.status = 'accepted'), 0)::numeric AS total_earnings,
+           COALESCE(AVG(b.amount), 0)::numeric AS average_bid,
+           COALESCE(
+             ROUND(
+               100.0 * COUNT(*) FILTER (WHERE b.status = 'accepted') / NULLIF(COUNT(*), 0),
+               1
+             ),
+             0
+           )::numeric AS win_rate
+         FROM bids b
+         WHERE b.provider_id = $1`,
+        [req.user.id],
+      ),
+      pool.query(
+        `SELECT
+           j.origin,
+           j.destination,
+           COUNT(*)::int AS bid_count,
+           COUNT(*) FILTER (WHERE b.status = 'accepted')::int AS won_count,
+           COALESCE(AVG(b.amount), 0)::numeric AS average_bid
+         FROM bids b
+         JOIN jobs j ON j.id = b.job_id
+         WHERE b.provider_id = $1
+         GROUP BY j.origin, j.destination
+         ORDER BY won_count DESC, bid_count DESC
+         LIMIT 6`,
+        [req.user.id],
+      ),
+      pool.query(
+        `SELECT b.status, COUNT(*)::int AS count
+         FROM bids b
+         WHERE b.provider_id = $1
+         GROUP BY b.status
+         ORDER BY count DESC`,
+        [req.user.id],
+      ),
+    ]);
+
+    res.status(200).json({
+      role: "driver",
+      summary: summaryResult.rows[0],
+      routes: routeResult.rows,
+      statuses: statusResult.rows,
+    });
+  } catch (error) {
+    console.error("Insights error:", error.message);
+    res.status(500).json({ error: "Server error fetching insights" });
+  }
+});
+
+// ---------------------------------
+// Route: Secure Freight Manifest PDF
+// ---------------------------------
+app.get("/api/jobs/:id/manifest.pdf", verifyToken, async (req, res) => {
+  try {
+    const manifestResult = await pool.query(
+      `SELECT
+         j.*,
+         seeker.name AS seeker_name,
+         seeker.email AS seeker_email,
+         seeker.company_name AS seeker_company,
+         provider.id AS provider_id,
+         provider.name AS provider_name,
+         provider.email AS provider_email,
+         provider.company_name AS provider_company,
+         b.amount AS winning_bid,
+         b.created_at AS accepted_bid_created_at
+       FROM jobs j
+       JOIN users seeker ON seeker.id = j.seeker_id
+       JOIN bids b ON b.job_id = j.id AND b.status = 'accepted'
+       JOIN users provider ON provider.id = b.provider_id
+       WHERE j.id = $1`,
+      [req.params.id],
+    );
+
+    if (manifestResult.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "Accepted manifest not found for this job." });
+    }
+
+    const job = manifestResult.rows[0];
+    const isSeeker = job.seeker_id === req.user.id;
+    const isProvider = job.provider_id === req.user.id;
+    if (!isSeeker && !isProvider) {
+      return res.status(403).json({ error: "You cannot access this manifest." });
+    }
+
+    const doc = new PDFDocument({ size: "A4", margin: 48 });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="logimatch-manifest-${job.id}.pdf"`,
+    );
+    doc.pipe(res);
+
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(22)
+      .text("LogiMatch Freight Manifest");
+    doc
+      .font("Helvetica")
+      .fontSize(10)
+      .fillColor("#555555")
+      .text(`Generated on ${formatDateForManifest(new Date())}`);
+    doc.moveDown();
+
+    doc
+      .fillColor("#111111")
+      .font("Helvetica-Bold")
+      .fontSize(14)
+      .text(`Shipment #${job.id}: ${job.origin} to ${job.destination}`);
+    doc.moveDown(0.5);
+    addManifestRow(doc, "Status:", job.status);
+    addManifestRow(doc, "Accepted Bid:", `INR ${roundMoney(job.winning_bid)}`);
+    addManifestRow(doc, "Current Location:", job.current_location || job.origin);
+    doc.moveDown();
+
+    doc.font("Helvetica-Bold").fontSize(13).text("Parties");
+    doc.fontSize(10);
+    addManifestRow(
+      doc,
+      "Seeker:",
+      `${job.seeker_name} (${job.seeker_company || "No company listed"})`,
+    );
+    addManifestRow(doc, "Seeker Email:", job.seeker_email);
+    addManifestRow(
+      doc,
+      "Provider:",
+      `${job.provider_name} (${job.provider_company || "No company listed"})`,
+    );
+    addManifestRow(doc, "Provider Email:", job.provider_email);
+    doc.moveDown();
+
+    doc.font("Helvetica-Bold").fontSize(13).text("Cargo");
+    doc.fontSize(10);
+    addManifestRow(doc, "Weight:", `${job.weight_kg} kg`);
+    addManifestRow(
+      doc,
+      "Dimensions:",
+      `${job.length_cm || "-"} L x ${job.width_cm || "-"} W x ${job.height_cm || "-"} H cm`,
+    );
+    addManifestRow(doc, "Packaging:", job.packaging_type);
+    addManifestRow(doc, "Fragile:", job.is_fragile ? "Yes" : "No");
+    addManifestRow(doc, "Hazmat:", job.is_hazmat ? "Yes" : "No");
+    addManifestRow(
+      doc,
+      "Refrigeration:",
+      job.requires_refrigeration ? "Required" : "Not required",
+    );
+    addManifestRow(
+      doc,
+      "Equipment:",
+      [
+        job.requires_liftgate ? "Liftgate" : null,
+        job.requires_loading_dock ? "Loading dock" : null,
+      ]
+        .filter(Boolean)
+        .join(", ") || "Standard loading",
+    );
+    doc.moveDown();
+
+    doc.font("Helvetica-Bold").fontSize(13).text("Schedule");
+    doc.fontSize(10);
+    addManifestRow(
+      doc,
+      "Pickup Window:",
+      `${formatDateForManifest(job.pickup_window_start)} to ${formatDateForManifest(job.pickup_window_end)}`,
+    );
+    addManifestRow(
+      doc,
+      "Delivery Window:",
+      `${formatDateForManifest(job.delivery_window_start)} to ${formatDateForManifest(job.delivery_window_end)}`,
+    );
+    addManifestRow(doc, "Actual Pickup:", formatDateForManifest(job.actual_pickup_time));
+    addManifestRow(
+      doc,
+      "Actual Delivery:",
+      formatDateForManifest(job.actual_delivery_time),
+    );
+    doc.moveDown();
+
+    doc.font("Helvetica-Bold").fontSize(13).text("Special Instructions");
+    doc
+      .font("Helvetica")
+      .fontSize(10)
+      .text(job.special_instructions || "No special instructions provided.", {
+        width: 500,
+      });
+    doc.moveDown();
+
+    doc
+      .fontSize(9)
+      .fillColor("#666666")
+      .text(
+        "This document is generated from LogiMatch job, bid, and user records for operational reference.",
+      );
+
+    doc.end();
+  } catch (error) {
+    console.error("Manifest PDF error:", error.message);
+    res.status(500).json({ error: "Server error generating manifest" });
+  }
+});
+
 // Test Route
 app.get("/api/status", (req, res) => {
   res.json({ message: "LogiMatch backend server is running smoothly!" });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is operating on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server is operating on port ${PORT}`);
+  });
+}
+
+module.exports = app;

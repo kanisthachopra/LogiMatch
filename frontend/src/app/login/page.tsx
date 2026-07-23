@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import { apiUrl } from "@/lib/api";
 
 export default function LoginPage() {
   // UI State: 'login' | 'forgot' | 'reset'
@@ -15,7 +16,7 @@ export default function LoginPage() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch("http://localhost:5000/api/users/login", {
+      const response = await fetch(apiUrl("/api/users/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -44,8 +45,8 @@ export default function LoginPage() {
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch(
-        "http://localhost:5000/api/users/forgot-password",
+      await fetch(
+        apiUrl("/api/users/forgot-password"),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -67,7 +68,7 @@ export default function LoginPage() {
     e.preventDefault();
     try {
       const response = await fetch(
-        "http://localhost:5000/api/users/reset-password",
+        apiUrl("/api/users/reset-password"),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
