@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import { apiUrl } from "@/lib/api";
 
 export default function RegisterPage() {
   const [step, setStep] = useState("register");
@@ -24,7 +25,7 @@ export default function RegisterPage() {
     };
 
     try {
-      const response = await fetch("http://localhost:5000/api/users/register", {
+      const response = await fetch(apiUrl("/api/users/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -48,7 +49,7 @@ export default function RegisterPage() {
     e.preventDefault();
     try {
       const response = await fetch(
-        "http://localhost:5000/api/users/verify-email",
+        apiUrl("/api/users/verify-email"),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
