@@ -45,10 +45,16 @@ Create a Neon project and copy the pooled PostgreSQL connection string.
 - Required environment variables:
   - `DATABASE_URL`
   - `JWT_SECRET`
-  - `EMAIL_USER`
-  - `EMAIL_PASS`
+  - `RESEND_API_KEY`
+  - `EMAIL_FROM`
   - `FRONTEND_URL`
   - `NODE_ENV=production`
+
+Use Resend for production email delivery. `EMAIL_FROM` can start as
+`LogiMatch <onboarding@resend.dev>` for testing, then move to a verified domain
+sender before final public use. Resend's `resend.dev` sender is limited to
+test emails sent to the Resend account owner's email address, so verify a
+domain before testing with other users.
 
 After the first deploy, run the database setup command once from the Render shell:
 
