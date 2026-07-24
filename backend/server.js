@@ -7,6 +7,7 @@ const haversine = require("haversine");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const PDFDocument = require("pdfkit");
+const dns = require("dns");
 require("dotenv").config();
 
 const app = express();
@@ -92,12 +93,20 @@ const verifyToken = (req, res, next) => {
 // ---------------------------------
 // Nodemailer Transporter Setup
 // ---------------------------------
+dns.setDefaultResultOrder("ipv4first");
+
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,
+  requireTLS: true,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  connectionTimeout: 30000,
+  greetingTimeout: 30000,
+  socketTimeout: 30000,
 });
 
 const generateOTP = () => {
@@ -110,18 +119,52 @@ const generateOTP = () => {
 app.post("/api/users/register", async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
+    if (!name || !email || !password || !role) {
+      return res
+        .status(400)
+        .json({ error: "Name, email, password, and role are required." });
+    }
+
+    if (!["seeker", "driver"].includes(role)) {
+      return res.status(400).json({ error: "Invalid user role." });
+    }
+
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     const otp = generateOTP();
     const otpExpiresAt = new Date(Date.now() + 15 * 60000);
 
-    const newUser = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, otp, otp_expires_at, is_verified) 
-       VALUES ($1, $2, $3, $4, $5, $6, false) 
-       RETURNING id, name, email, role`,
-      [name, email, hashedPassword, role, otp, otpExpiresAt],
+    const existingUser = await pool.query(
+      "SELECT id, is_verified FROM users WHERE email = $1",
+      [email],
     );
+
+    let userEmail = email;
+    if (existingUser.rows.length > 0) {
+      if (existingUser.rows[0].is_verified) {
+        return res
+          .status(400)
+          .json({ error: "Email already exists in our system." });
+      }
+
+      const updatedUser = await pool.query(
+        `UPDATE users
+         SET name = $1, password_hash = $2, role = $3, otp = $4, otp_expires_at = $5
+         WHERE email = $6
+         RETURNING email`,
+        [name, hashedPassword, role, otp, otpExpiresAt, email],
+      );
+      userEmail = updatedUser.rows[0].email;
+    } else {
+      const newUser = await pool.query(
+        `INSERT INTO users (name, email, password_hash, role, otp, otp_expires_at, is_verified)
+         VALUES ($1, $2, $3, $4, $5, $6, false)
+         RETURNING email`,
+        [name, email, hashedPassword, role, otp, otpExpiresAt],
+      );
+      userEmail = newUser.rows[0].email;
+    }
 
     const mailOptions = {
       from: `"LogiMatch Support" <${process.env.EMAIL_USER}>`,
@@ -133,12 +176,20 @@ app.post("/api/users/register", async (req, res) => {
         <p>This code will expire in 15 minutes.</p>
       `,
     };
-    await transporter.sendMail(mailOptions);
+    try {
+      await transporter.sendMail(mailOptions);
+    } catch (mailError) {
+      console.error("Error sending verification email:", mailError.message);
+      return res.status(502).json({
+        error:
+          "Account saved, but verification email could not be sent. Please try again in a minute.",
+      });
+    }
 
     res.status(201).json({
       message:
         "Registration successful! Please check your email for the verification code.",
-      email: newUser.rows[0].email,
+      email: userEmail,
     });
   } catch (error) {
     console.error("Error during registration:", error.message);
