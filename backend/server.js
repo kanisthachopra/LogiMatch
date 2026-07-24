@@ -4,10 +4,8 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const pool = require("./db");
 const haversine = require("haversine");
-const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const PDFDocument = require("pdfkit");
-const dns = require("dns");
 require("dotenv").config();
 
 const app = express();
@@ -90,24 +88,40 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// ---------------------------------
-// Nodemailer Transporter Setup
-// ---------------------------------
-dns.setDefaultResultOrder("ipv4first");
+const emailFrom =
+  process.env.EMAIL_FROM || "LogiMatch <onboarding@resend.dev>";
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
-  requireTLS: true,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  connectionTimeout: 30000,
-  greetingTimeout: 30000,
-  socketTimeout: 30000,
-});
+const sendEmail = async ({ to, bcc, subject, html }) => {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY is not configured");
+  }
+
+  const payload = {
+    from: emailFrom,
+    subject,
+    html,
+  };
+
+  if (to) payload.to = Array.isArray(to) ? to : [to];
+  if (bcc) payload.bcc = Array.isArray(bcc) ? bcc : [bcc];
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Resend email failed (${response.status}): ${errorText}`);
+  }
+
+  return response.json();
+};
 
 const generateOTP = () => {
   return crypto.randomInt(100000, 999999).toString();
@@ -167,7 +181,6 @@ app.post("/api/users/register", async (req, res) => {
     }
 
     const mailOptions = {
-      from: `"LogiMatch Support" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "Verify your LogiMatch Account",
       html: `
@@ -177,7 +190,7 @@ app.post("/api/users/register", async (req, res) => {
       `,
     };
     try {
-      await transporter.sendMail(mailOptions);
+      await sendEmail(mailOptions);
     } catch (mailError) {
       console.error("Error sending verification email:", mailError.message);
       return res.status(502).json({
@@ -317,7 +330,6 @@ app.post("/api/users/forgot-password", async (req, res) => {
     );
 
     const mailOptions = {
-      from: `"LogiMatch Security" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "Password Reset Request",
       html: `
@@ -326,7 +338,7 @@ app.post("/api/users/forgot-password", async (req, res) => {
         <p>This code will expire in 15 minutes. If you did not request this, please ignore this email.</p>
       `,
     };
-    await transporter.sendMail(mailOptions);
+    await sendEmail(mailOptions);
 
     res
       .status(200)
@@ -457,15 +469,22 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
     const drivers = await pool.query(
       `SELECT email FROM users WHERE role = 'driver' AND is_verified = true`,
     );
-    const driverEmails = drivers.rows.map((d) => d.email).join(",");
+    const driverEmails = drivers.rows.map((d) => d.email);
 
-    if (driverEmails && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-      await transporter.sendMail({
-        from: `"LogiMatch Market" <${process.env.EMAIL_USER}>`,
-        bcc: driverEmails,
-        subject: `New Cargo Alert: ${origin} to ${destination}`,
-        html: `<p>A new <b>${weight_kg}kg</b> shipment from <b>${origin}</b> to <b>${destination}</b> has just been posted.</p>`,
-      });
+    if (driverEmails.length > 0 && process.env.RESEND_API_KEY) {
+      try {
+        await Promise.all(
+          driverEmails.map((driverEmail) =>
+            sendEmail({
+              to: driverEmail,
+              subject: `New Cargo Alert: ${origin} to ${destination}`,
+              html: `<p>A new <b>${weight_kg}kg</b> shipment from <b>${origin}</b> to <b>${destination}</b> has just been posted.</p>`,
+            }),
+          ),
+        );
+      } catch (emailError) {
+        console.error("Driver alert email failed:", emailError.message);
+      }
     }
 
     res.status(201).json(newJob.rows[0]);
@@ -718,17 +737,20 @@ app.post("/api/bids", verifyToken, async (req, res) => {
 
     if (seekerResult.rows.length > 0) {
       const seeker = seekerResult.rows[0];
-      if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-        await transporter.sendMail({
-        from: `"LogiMatch Market" <${process.env.EMAIL_USER}>`,
-        to: seeker.email,
-        subject: `New Bid Received! (₹${numericAmount})`,
-        html: `
-          <h2>Hello ${seeker.name},</h2>
-          <p>You just received a new bid of <b>₹${numericAmount}</b> for your cargo from ${seeker.origin} to ${seeker.destination}.</p>
-          <p>Log in to your Profile to review and accept the offer.</p>
-        `,
-        });
+      if (process.env.RESEND_API_KEY) {
+        try {
+          await sendEmail({
+            to: seeker.email,
+            subject: `New Bid Received! (₹${numericAmount})`,
+            html: `
+              <h2>Hello ${seeker.name},</h2>
+              <p>You just received a new bid of <b>₹${numericAmount}</b> for your cargo from ${seeker.origin} to ${seeker.destination}.</p>
+              <p>Log in to your Profile to review and accept the offer.</p>
+            `,
+          });
+        } catch (emailError) {
+          console.error("Bid alert email failed:", emailError.message);
+        }
       }
     }
 

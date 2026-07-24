@@ -9,11 +9,6 @@ const mockPool = {
 };
 
 jest.mock("../db", () => mockPool);
-jest.mock("nodemailer", () => ({
-  createTransport: () => ({
-    sendMail: jest.fn(),
-  }),
-}));
 
 const app = require("../server");
 
