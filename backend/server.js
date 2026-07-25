@@ -115,6 +115,130 @@ const addManifestRow = (doc, label, value) => {
   doc.font("Helvetica").text(` ${value || "Not specified"}`);
 };
 
+const shortPlace = (place) => String(place || "TBD").split(",")[0].trim();
+
+const manifestText = (value, fallback = "Not specified") =>
+  value === undefined || value === null || value === "" ? fallback : String(value);
+
+const drawManifestSectionTitle = (doc, title, x, y, width) => {
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor("#2563eb")
+    .text(title.toUpperCase(), x, y, {
+      width,
+      characterSpacing: 0.8,
+    });
+  doc
+    .moveTo(x, y + 16)
+    .lineTo(x + width, y + 16)
+    .strokeColor("#dbeafe")
+    .lineWidth(1)
+    .stroke();
+};
+
+const drawManifestBadge = (doc, text, x, y, options = {}) => {
+  const fill = options.fill || "#dcfce7";
+  const stroke = options.stroke || "#86efac";
+  const color = options.color || "#166534";
+  const width = options.width || Math.max(84, String(text).length * 6 + 24);
+
+  doc.roundedRect(x, y, width, 26, 13).fillAndStroke(fill, stroke);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(color)
+    .text(String(text).toUpperCase(), x, y + 8, {
+      width,
+      align: "center",
+      characterSpacing: 0.4,
+    });
+};
+
+const drawManifestKeyValue = (doc, label, value, x, y, width) => {
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .fillColor("#64748b")
+    .text(label.toUpperCase(), x, y, {
+      width,
+      characterSpacing: 0.5,
+    });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(11)
+    .fillColor("#0f172a")
+    .text(manifestText(value), x, y + 14, {
+      width,
+      lineGap: 2,
+    });
+};
+
+const drawManifestPartyCard = (doc, title, name, company, email, x, y, width) => {
+  doc.roundedRect(x, y, width, 88, 10).fillAndStroke("#ffffff", "#e2e8f0");
+  doc.circle(x + 28, y + 32, 18).fill("#dbeafe");
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .fillColor("#1d4ed8")
+    .text(
+      String(name || title)
+        .split(" ")
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase(),
+      x + 10,
+      y + 27,
+      { width: 36, align: "center" },
+    );
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .fillColor("#64748b")
+    .text(title.toUpperCase(), x + 56, y + 16, {
+      width: width - 70,
+      characterSpacing: 0.6,
+    });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(12)
+    .fillColor("#0f172a")
+    .text(manifestText(name), x + 56, y + 32, {
+      width: width - 70,
+      height: 16,
+      ellipsis: true,
+    });
+  doc
+    .font("Helvetica")
+    .fontSize(9)
+    .fillColor("#475569")
+    .text(company || "Independent operator", x + 56, y + 49, {
+      width: width - 70,
+      height: 14,
+      ellipsis: true,
+    })
+    .text(email || "No email listed", x + 56, y + 64, {
+      width: width - 70,
+      height: 14,
+      ellipsis: true,
+    });
+};
+
+const drawManifestTimelineItem = (doc, label, value, x, y, color) => {
+  doc.circle(x + 6, y + 8, 5).fill(color);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .fillColor("#64748b")
+    .text(label.toUpperCase(), x + 20, y, { width: 190, characterSpacing: 0.4 });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .fillColor("#0f172a")
+    .text(value, x + 20, y + 14, { width: 190 });
+};
+
 // ---------------------------------
 // Middleware: The JWT Bouncer
 // ---------------------------------
@@ -1500,106 +1624,251 @@ app.get("/api/jobs/:id/manifest.pdf", verifyToken, async (req, res) => {
     );
     doc.pipe(res);
 
+    const pageWidth = doc.page.width;
+    const pageHeight = doc.page.height;
+    const margin = 42;
+    const contentWidth = pageWidth - margin * 2;
+    const left = margin;
+    const right = margin + contentWidth;
+    const originCity = shortPlace(job.origin);
+    const destinationCity = shortPlace(job.destination);
+    const statusText = String(job.status || "assigned").replace("_", " ");
+    const acceptedBid = `INR ${roundMoney(job.winning_bid).toLocaleString("en-IN")}`;
+    const dimensions = `${job.length_cm || "-"} x ${job.width_cm || "-"} x ${job.height_cm || "-"} cm`;
+    const equipment = [
+      job.requires_liftgate ? "Liftgate" : null,
+      job.requires_loading_dock ? "Loading dock" : null,
+    ]
+      .filter(Boolean)
+      .join(", ") || "Standard loading";
+    const riskFlags = [
+      job.is_fragile ? "Fragile" : null,
+      job.is_hazmat ? "Hazmat" : null,
+      job.requires_refrigeration ? "Refrigerated" : null,
+    ].filter(Boolean);
+
+    doc.rect(0, 0, pageWidth, pageHeight).fill("#f8fafc");
+
+    doc.roundedRect(left, 32, contentWidth, 112, 16).fill("#0f172a");
+    doc.circle(left + 42, 72, 24).fill("#2563eb");
     doc
       .font("Helvetica-Bold")
-      .fontSize(22)
-      .text("LogiMatch Freight Manifest");
+      .fontSize(15)
+      .fillColor("#ffffff")
+      .text("LM", left + 20, 64, { width: 44, align: "center" });
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .fillColor("#ffffff")
+      .text("LogiMatch Freight Manifest", left + 82, 54, {
+        width: contentWidth - 250,
+        lineBreak: false,
+      });
     doc
       .font("Helvetica")
-      .fontSize(10)
-      .fillColor("#555555")
-      .text(`Generated on ${formatDateForManifest(new Date())}`);
-    doc.moveDown();
-
+      .fontSize(9)
+      .fillColor("#cbd5e1")
+      .text("Verified dispatch document for accepted freight movement", left + 84, 82, {
+        width: contentWidth - 220,
+      });
     doc
-      .fillColor("#111111")
+      .font("Helvetica-Bold")
+      .fontSize(9)
+      .fillColor("#93c5fd")
+      .text(`MANIFEST #${job.id}`, right - 145, 54, {
+        width: 120,
+        align: "right",
+      });
+    doc
+      .font("Helvetica")
+      .fontSize(8)
+      .fillColor("#cbd5e1")
+      .text(`Generated: ${formatDateForManifest(new Date())}`, right - 190, 76, {
+        width: 165,
+        align: "right",
+      });
+
+    drawManifestBadge(doc, statusText, right - 130, 104, {
+      width: 104,
+      fill: job.status === "delivered" || job.status === "completed" ? "#dcfce7" : "#dbeafe",
+      stroke: job.status === "delivered" || job.status === "completed" ? "#86efac" : "#93c5fd",
+      color: job.status === "delivered" || job.status === "completed" ? "#166534" : "#1d4ed8",
+    });
+
+    doc.roundedRect(left, 162, contentWidth, 104, 14).fillAndStroke("#ffffff", "#e2e8f0");
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .fillColor("#64748b")
+      .text("ROUTE", left + 22, 182, { width: 80, characterSpacing: 0.8 });
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(25)
+      .fillColor("#0f172a")
+      .text(originCity, left + 22, 204, { width: 170, height: 34, ellipsis: true });
+    doc
+      .moveTo(left + 204, 220)
+      .lineTo(left + 292, 220)
+      .strokeColor("#2563eb")
+      .lineWidth(3)
+      .stroke();
+    doc
+      .polygon([left + 292, 214], [left + 308, 220], [left + 292, 226])
+      .fill("#2563eb");
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(25)
+      .fillColor("#0f172a")
+      .text(destinationCity, left + 322, 204, {
+        width: 82,
+        height: 34,
+        ellipsis: true,
+      });
+    doc.roundedRect(right - 122, 184, 96, 58, 12).fill("#f0fdf4");
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(8)
+      .fillColor("#15803d")
+      .text("ACCEPTED BID", right - 112, 196, {
+        width: 76,
+        align: "center",
+        characterSpacing: 0.5,
+      });
+    doc
       .font("Helvetica-Bold")
       .fontSize(14)
-      .text(`Shipment #${job.id}: ${job.origin} to ${job.destination}`);
-    doc.moveDown(0.5);
-    addManifestRow(doc, "Status:", job.status);
-    addManifestRow(doc, "Accepted Bid:", `INR ${roundMoney(job.winning_bid)}`);
-    addManifestRow(doc, "Current Location:", job.current_location || job.origin);
-    doc.moveDown();
+      .fillColor("#166534")
+      .text(acceptedBid, right - 116, 215, { width: 84, align: "center" });
 
-    doc.font("Helvetica-Bold").fontSize(13).text("Parties");
-    doc.fontSize(10);
-    addManifestRow(
+    drawManifestSectionTitle(doc, "Shipment Parties", left, 288, contentWidth);
+    drawManifestPartyCard(
       doc,
-      "Seeker:",
-      `${job.seeker_name} (${job.seeker_company || "No company listed"})`,
+      "Customer / Seeker",
+      job.seeker_name,
+      job.seeker_company,
+      job.seeker_email,
+      left,
+      316,
+      248,
     );
-    addManifestRow(doc, "Seeker Email:", job.seeker_email);
-    addManifestRow(
+    drawManifestPartyCard(
       doc,
-      "Provider:",
-      `${job.provider_name} (${job.provider_company || "No company listed"})`,
+      "Transporter / Provider",
+      job.provider_name,
+      job.provider_company,
+      job.provider_email,
+      left + 272,
+      316,
+      248,
     );
-    addManifestRow(doc, "Provider Email:", job.provider_email);
-    doc.moveDown();
 
-    doc.font("Helvetica-Bold").fontSize(13).text("Cargo");
-    doc.fontSize(10);
-    addManifestRow(doc, "Weight:", `${job.weight_kg} kg`);
-    addManifestRow(
-      doc,
-      "Dimensions:",
-      `${job.length_cm || "-"} L x ${job.width_cm || "-"} W x ${job.height_cm || "-"} H cm`,
-    );
-    addManifestRow(doc, "Packaging:", job.packaging_type);
-    addManifestRow(doc, "Fragile:", job.is_fragile ? "Yes" : "No");
-    addManifestRow(doc, "Hazmat:", job.is_hazmat ? "Yes" : "No");
-    addManifestRow(
-      doc,
-      "Refrigeration:",
-      job.requires_refrigeration ? "Required" : "Not required",
-    );
-    addManifestRow(
-      doc,
-      "Equipment:",
-      [
-        job.requires_liftgate ? "Liftgate" : null,
-        job.requires_loading_dock ? "Loading dock" : null,
-      ]
-        .filter(Boolean)
-        .join(", ") || "Standard loading",
-    );
-    doc.moveDown();
+    drawManifestSectionTitle(doc, "Cargo Snapshot", left, 426, contentWidth);
+    doc.roundedRect(left, 454, contentWidth, 96, 12).fillAndStroke("#ffffff", "#e2e8f0");
+    drawManifestKeyValue(doc, "Weight", `${manifestText(job.weight_kg, "-")} kg`, left + 20, 474, 110);
+    drawManifestKeyValue(doc, "Dimensions", dimensions, left + 150, 474, 120);
+    drawManifestKeyValue(doc, "Packaging", job.packaging_type, left + 292, 474, 110);
+    drawManifestKeyValue(doc, "Equipment", equipment, left + 416, 474, 90);
 
-    doc.font("Helvetica-Bold").fontSize(13).text("Schedule");
-    doc.fontSize(10);
-    addManifestRow(
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(8)
+      .fillColor("#64748b")
+      .text("RISK FLAGS", left + 20, 522, { width: 90, characterSpacing: 0.5 });
+    if (riskFlags.length === 0) {
+      drawManifestBadge(doc, "standard cargo", left + 92, 514, {
+        width: 112,
+        fill: "#f1f5f9",
+        stroke: "#cbd5e1",
+        color: "#475569",
+      });
+    } else {
+      riskFlags.slice(0, 3).forEach((flag, index) => {
+        drawManifestBadge(doc, flag, left + 92 + index * 112, 514, {
+          width: 98,
+          fill: "#fef3c7",
+          stroke: "#fbbf24",
+          color: "#92400e",
+        });
+      });
+    }
+
+    drawManifestSectionTitle(doc, "Schedule & Tracking", left, 566, contentWidth);
+    doc.roundedRect(left, 592, contentWidth, 90, 12).fillAndStroke("#ffffff", "#e2e8f0");
+    doc
+      .moveTo(left + 34, 616)
+      .lineTo(left + 34, 660)
+      .strokeColor("#bfdbfe")
+      .lineWidth(2)
+      .stroke();
+    drawManifestTimelineItem(
       doc,
-      "Pickup Window:",
+      "Pickup Window",
       `${formatDateForManifest(job.pickup_window_start)} to ${formatDateForManifest(job.pickup_window_end)}`,
+      left + 22,
+      608,
+      "#2563eb",
     );
-    addManifestRow(
+    drawManifestTimelineItem(
       doc,
-      "Delivery Window:",
+      "Delivery Window",
       `${formatDateForManifest(job.delivery_window_start)} to ${formatDateForManifest(job.delivery_window_end)}`,
+      left + 290,
+      608,
+      "#16a34a",
     );
-    addManifestRow(doc, "Actual Pickup:", formatDateForManifest(job.actual_pickup_time));
-    addManifestRow(
+    drawManifestTimelineItem(
       doc,
-      "Actual Delivery:",
-      formatDateForManifest(job.actual_delivery_time),
+      "Actual Pickup",
+      formatDateForManifest(job.actual_pickup_time),
+      left + 22,
+      646,
+      "#2563eb",
     );
-    doc.moveDown();
+    drawManifestTimelineItem(
+      doc,
+      "Actual Delivery",
+      formatDateForManifest(job.actual_delivery_time),
+      left + 290,
+      646,
+      "#16a34a",
+    );
 
-    doc.font("Helvetica-Bold").fontSize(13).text("Special Instructions");
+    doc.roundedRect(left, 700, contentWidth, 60, 12).fillAndStroke("#ffffff", "#e2e8f0");
+    drawManifestKeyValue(
+      doc,
+      "Current Location",
+      job.current_location || job.origin,
+      left + 20,
+      716,
+      220,
+    );
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(8)
+      .fillColor("#64748b")
+      .text("SPECIAL INSTRUCTIONS", left + 270, 716, {
+        width: 220,
+        characterSpacing: 0.5,
+      });
     doc
       .font("Helvetica")
-      .fontSize(10)
-      .text(job.special_instructions || "No special instructions provided.", {
-        width: 500,
+      .fontSize(9)
+      .fillColor("#334155")
+      .text(job.special_instructions || "No special instructions provided.", left + 270, 732, {
+        width: 230,
+        height: 22,
+        ellipsis: true,
       });
-    doc.moveDown();
 
     doc
-      .fontSize(9)
-      .fillColor("#666666")
+      .font("Helvetica")
+      .fontSize(8)
+      .fillColor("#64748b")
       .text(
-        "This document is generated from LogiMatch job, bid, and user records for operational reference.",
+        "Generated from LogiMatch job, bid, tracking, and user records. Access is restricted to the job seeker and accepted provider.",
+        left,
+        778,
+        { width: contentWidth, align: "center" },
       );
 
     doc.end();

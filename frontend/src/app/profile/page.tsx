@@ -466,20 +466,34 @@ function BarList({ title, rows, valueKey, labelKey = "count", money = false }: a
 }
 
 function aggregateRecords(records: any[], xKey: string, yKey: string, mode: string) {
-  const buckets = new Map<string, { label: string; total: number; count: number }>();
+  const buckets = new Map<
+    string,
+    { label: string; total: number; count: number; sortDate: string }
+  >();
 
   records.forEach((record) => {
     const label = String(record[xKey] || "Unknown");
     const metricValue = yKey === "count" ? 1 : Number(record[yKey] || 0);
-    const current = buckets.get(label) || { label, total: 0, count: 0 };
+    const current = buckets.get(label) || {
+      label,
+      total: 0,
+      count: 0,
+      sortDate: record.created_date || label,
+    };
     current.total += Number.isFinite(metricValue) ? metricValue : 0;
     current.count += 1;
+    if (record.created_date && record.created_date < current.sortDate) {
+      current.sortDate = record.created_date;
+    }
     buckets.set(label, current);
   });
 
   return Array.from(buckets.values())
     .map((bucket) => ({
       label: bucket.label,
+      total: bucket.total,
+      count: bucket.count,
+      sortDate: bucket.sortDate,
       value:
         mode === "average"
           ? bucket.count
@@ -489,7 +503,11 @@ function aggregateRecords(records: any[], xKey: string, yKey: string, mode: stri
             ? bucket.count
             : bucket.total,
     }))
-    .sort((a, b) => b.value - a.value)
+    .sort((a, b) =>
+      xKey === "created_month"
+        ? a.sortDate.localeCompare(b.sortDate)
+        : b.value - a.value,
+    )
     .slice(0, 8);
 }
 
@@ -521,6 +539,212 @@ function ChartValue({ value, money = false }: any) {
     <span className="text-xs font-black text-gray-600 whitespace-nowrap">
       {money ? moneyLabel(value) : Math.round(Number(value || 0)).toLocaleString("en-IN")}
     </span>
+  );
+}
+
+function metricLabel(value: number | string, money = false) {
+  const numericValue = Number(value || 0);
+  if (money) return moneyLabel(numericValue);
+  return Number.isInteger(numericValue)
+    ? numericValue.toLocaleString("en-IN")
+    : numericValue.toFixed(1);
+}
+
+function InsightMetric({ label, value, tone = "blue" }: any) {
+  const toneClass =
+    tone === "green"
+      ? "bg-green-50 text-green-800 border-green-100"
+      : tone === "yellow"
+        ? "bg-yellow-50 text-yellow-800 border-yellow-100"
+        : tone === "red"
+          ? "bg-red-50 text-red-800 border-red-100"
+          : "bg-blue-50 text-blue-800 border-blue-100";
+
+  return (
+    <div className={`rounded-lg border px-4 py-3 ${toneClass}`}>
+      <p className="text-[11px] font-black uppercase tracking-widest opacity-75">
+        {label}
+      </p>
+      <p className="text-sm font-black mt-1 truncate">{value}</p>
+    </div>
+  );
+}
+
+function AnalyzerChart({ rows, chartType, money = false }: any) {
+  const width = 760;
+  const height = 360;
+  const margin = { top: 34, right: 28, bottom: 92, left: 76 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const max = Math.max(1, ...rows.map((row: any) => Number(row.value || 0)));
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const step = rows.length > 0 ? plotWidth / rows.length : plotWidth;
+  const pointFor = (row: any, index: number) => {
+    const x = margin.left + step * index + step / 2;
+    const y = margin.top + plotHeight - (Number(row.value || 0) / max) * plotHeight;
+    return { x, y };
+  };
+  const points = rows.map((row: any, index: number) => pointFor(row, index));
+
+  if (chartType === "table") {
+    return (
+      <div className="overflow-x-auto rounded-xl border border-gray-200">
+        <table className="min-w-full divide-y divide-gray-200 text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-3 text-left font-black text-gray-600 uppercase tracking-widest text-xs">
+                Group
+              </th>
+              <th className="px-4 py-3 text-right font-black text-gray-600 uppercase tracking-widest text-xs">
+                Value
+              </th>
+              <th className="px-4 py-3 text-right font-black text-gray-600 uppercase tracking-widest text-xs">
+                Records
+              </th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-100">
+            {rows.map((row: any) => (
+              <tr key={row.label}>
+                <td className="px-4 py-3 font-bold text-gray-900">{row.label}</td>
+                <td className="px-4 py-3 font-black text-gray-900 text-right">
+                  {metricLabel(row.value, money)}
+                </td>
+                <td className="px-4 py-3 font-bold text-gray-500 text-right">
+                  {row.count}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 overflow-x-auto">
+      <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[680px] w-full h-[360px]">
+        <rect x="0" y="0" width={width} height={height} fill="#ffffff" />
+        {ticks.map((tick) => {
+          const y = margin.top + plotHeight - tick * plotHeight;
+          return (
+            <g key={tick}>
+              <line
+                x1={margin.left}
+                x2={width - margin.right}
+                y1={y}
+                y2={y}
+                stroke="#e2e8f0"
+                strokeWidth="1"
+              />
+              <text
+                x={margin.left - 12}
+                y={y + 4}
+                textAnchor="end"
+                className="fill-gray-500 text-[12px] font-bold"
+              >
+                {tick === 1 ? metricLabel(max, money) : metricLabel(max * tick, money)}
+              </text>
+            </g>
+          );
+        })}
+        <line
+          x1={margin.left}
+          x2={margin.left}
+          y1={margin.top}
+          y2={margin.top + plotHeight}
+          stroke="#94a3b8"
+          strokeWidth="1.5"
+        />
+        <line
+          x1={margin.left}
+          x2={width - margin.right}
+          y1={margin.top + plotHeight}
+          y2={margin.top + plotHeight}
+          stroke="#94a3b8"
+          strokeWidth="1.5"
+        />
+
+        {chartType === "bar" &&
+          rows.map((row: any, index: number) => {
+            const point = pointFor(row, index);
+            const barWidth = Math.min(54, Math.max(22, step * 0.56));
+            const barHeight = margin.top + plotHeight - point.y;
+            return (
+              <g key={row.label}>
+                <rect
+                  x={point.x - barWidth / 2}
+                  y={point.y}
+                  width={barWidth}
+                  height={Math.max(barHeight, 3)}
+                  rx="8"
+                  fill="#2563eb"
+                />
+                <text
+                  x={point.x}
+                  y={point.y - 10}
+                  textAnchor="middle"
+                  className="fill-gray-700 text-[12px] font-black"
+                >
+                  {metricLabel(row.value, money)}
+                </text>
+              </g>
+            );
+          })}
+
+        {chartType === "line" && points.length > 0 && (
+          <polyline
+            fill="none"
+            stroke="#16a34a"
+            strokeWidth="5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            points={points.map((point: any) => `${point.x},${point.y}`).join(" ")}
+          />
+        )}
+
+        {(chartType === "line" || chartType === "scatter") &&
+          rows.map((row: any, index: number) => {
+            const point = pointFor(row, index);
+            return (
+              <g key={row.label}>
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={chartType === "scatter" ? 9 : 7}
+                  fill="#ffffff"
+                  stroke={chartType === "scatter" ? "#2563eb" : "#16a34a"}
+                  strokeWidth="4"
+                />
+                <text
+                  x={point.x}
+                  y={point.y - 14}
+                  textAnchor="middle"
+                  className="fill-gray-700 text-[12px] font-black"
+                >
+                  {metricLabel(row.value, money)}
+                </text>
+              </g>
+            );
+          })}
+
+        {rows.map((row: any, index: number) => {
+          const point = pointFor(row, index);
+          return (
+            <text
+              key={`label-${row.label}`}
+              x={point.x - 4}
+              y={height - 62}
+              textAnchor="end"
+              transform={`rotate(-28 ${point.x - 4} ${height - 62})`}
+              className="fill-gray-600 text-[12px] font-bold"
+            >
+              {row.label.length > 18 ? `${row.label.slice(0, 18)}...` : row.label}
+            </text>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
@@ -637,19 +861,30 @@ function CustomChartBuilder({ records, isSeeker }: any) {
   const [xKey, setXKey] = useState(xOptions[0].key);
   const [yKey, setYKey] = useState(yOptions[0].key);
   const [mode, setMode] = useState("average");
+  const [chartType, setChartType] = useState("bar");
   const selectedMetric = yOptions.find((option) => option.key === yKey) || yOptions[0];
   const chartRows = aggregateRecords(records || [], xKey, yKey, yKey === "count" ? "count" : mode);
+  const sortedByValue = [...chartRows].sort((a, b) => b.value - a.value);
+  const highest = sortedByValue[0];
+  const lowest = sortedByValue[sortedByValue.length - 1];
+  const average =
+    chartRows.length > 0
+      ? chartRows.reduce((total, row) => total + row.value, 0) / chartRows.length
+      : 0;
+  const recordsUsed = chartRows.reduce((total, row) => total + row.count, 0);
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
         <div>
-          <h4 className="text-lg font-black text-gray-900">Custom Historical Graph Builder</h4>
+          <h4 className="text-lg font-black text-gray-900">
+            Custom Historical Graph Analyser
+          </h4>
           <p className="text-sm font-bold text-gray-500">
-            Choose axes from your own shipment history and generate a graph.
+            Choose axes, aggregation, and chart type to analyse historical records.
           </p>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           <select
             value={xKey}
             onChange={(event) => setXKey(event.target.value)}
@@ -681,6 +916,16 @@ function CustomChartBuilder({ records, isSeeker }: any) {
             <option value="average">Average</option>
             <option value="sum">Total</option>
           </select>
+          <select
+            value={chartType}
+            onChange={(event) => setChartType(event.target.value)}
+            className="px-3 py-2 rounded-lg border border-gray-300 bg-gray-50 text-sm font-bold text-gray-900"
+          >
+            <option value="bar">Bar Chart</option>
+            <option value="line">Line Chart</option>
+            <option value="scatter">Scatter Plot</option>
+            <option value="table">Table View</option>
+          </select>
         </div>
       </div>
 
@@ -689,26 +934,49 @@ function CustomChartBuilder({ records, isSeeker }: any) {
           <p className="text-sm font-bold text-gray-500">No historical records available for this graph yet.</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {chartRows.map((row) => {
-            const max = Math.max(1, ...chartRows.map((item) => item.value));
-            return (
-              <div key={row.label}>
-                <div className="flex justify-between gap-3 text-sm font-bold mb-1">
-                  <span className="text-gray-800 truncate">{row.label}</span>
-                  <span className="text-gray-600 whitespace-nowrap">
-                    {selectedMetric.money ? moneyLabel(row.value) : Math.round(row.value).toLocaleString("en-IN")}
-                  </span>
-                </div>
-                <div className="h-4 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-green-600 rounded-full"
-                    style={{ width: `${Math.max((row.value / max) * 100, 8)}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })}
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <InsightMetric
+              label="Highest"
+              value={`${highest?.label}: ${metricLabel(highest?.value, selectedMetric.money)}`}
+              tone="green"
+            />
+            <InsightMetric
+              label="Lowest"
+              value={`${lowest?.label}: ${metricLabel(lowest?.value, selectedMetric.money)}`}
+              tone="yellow"
+            />
+            <InsightMetric
+              label="Group Average"
+              value={metricLabel(average, selectedMetric.money)}
+            />
+            <InsightMetric
+              label="Records Used"
+              value={recordsUsed.toLocaleString("en-IN")}
+            />
+          </div>
+
+          <AnalyzerChart
+            rows={chartRows}
+            chartType={chartType}
+            money={selectedMetric.money}
+          />
+
+          <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
+            <p className="text-sm font-bold text-gray-700">
+              Showing{" "}
+              <span className="text-blue-700">
+                {yKey === "count" ? "count" : mode}
+              </span>{" "}
+              of <span className="text-blue-700">{selectedMetric.label}</span>{" "}
+              grouped by{" "}
+              <span className="text-blue-700">
+                {xOptions.find((option) => option.key === xKey)?.label}
+              </span>
+              . Add more completed jobs and bids during testing to make this
+              comparison richer.
+            </p>
+          </div>
         </div>
       )}
     </div>
@@ -823,6 +1091,9 @@ export default function ProfilePage() {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [expandedCustomerJobId, setExpandedCustomerJobId] = useState<
+    string | number | null
+  >(null);
+  const [expandedCustomerChatJobId, setExpandedCustomerChatJobId] = useState<
     string | number | null
   >(null);
 
@@ -1344,6 +1615,8 @@ export default function ProfilePage() {
                           ? job.bids.find((b: any) => b.status === "accepted")
                           : null;
                         const isExpanded = expandedCustomerJobId === job.id;
+                        const isCustomerChatOpen =
+                          expandedCustomerChatJobId === job.id;
                         const statusTone =
                           job.status === "delivered" || job.status === "completed"
                             ? "bg-green-100 text-green-800"
@@ -1453,14 +1726,29 @@ export default function ProfilePage() {
                                         )}{" "}
                                         ({winningBid.rating_count} Reviews)
                                       </p>
-                                      <button
-                                        onClick={() =>
-                                          handleDownloadManifest(job.id)
-                                        }
-                                        className="block mt-4 bg-blue-600 text-white font-black px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-xs"
-                                      >
-                                        Download Manifest
-                                      </button>
+                                      <div className="mt-4 flex flex-col sm:flex-row gap-2">
+                                        <button
+                                          onClick={() =>
+                                            handleDownloadManifest(job.id)
+                                          }
+                                          className="bg-blue-600 text-white font-black px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-xs"
+                                        >
+                                          Download Manifest
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setExpandedCustomerChatJobId(
+                                              isCustomerChatOpen ? null : job.id,
+                                            )
+                                          }
+                                          className="bg-white text-blue-700 border border-blue-200 font-black px-4 py-2 rounded-lg hover:bg-blue-50 transition-colors text-xs"
+                                        >
+                                          {isCustomerChatOpen
+                                            ? "Hide Chat"
+                                            : "Open Chat"}
+                                        </button>
+                                      </div>
                                     </div>
                                     <div className="border-l-0 md:border-l-2 border-gray-200 md:pl-6 flex flex-col justify-center">
                                       <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
@@ -1541,12 +1829,15 @@ export default function ProfilePage() {
                                           "
                                         </p>
                                       </div>
-                                      <div className="lg:col-span-2">
-                                        <JobChatThread
-                                          jobId={job.id}
-                                          currentUserId={profile?.id}
-                                        />
-                                      </div>
+                                    </div>
+                                  )}
+
+                                  {isCustomerChatOpen && (
+                                    <div className="mt-5 pt-5 border-t border-gray-200">
+                                      <JobChatThread
+                                        jobId={job.id}
+                                        currentUserId={profile?.id}
+                                      />
                                     </div>
                                   )}
                                 </div>
