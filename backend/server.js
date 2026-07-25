@@ -10,24 +10,72 @@ require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+let chatMessagesTableReady = false;
 
-const allowedOrigins = [
+const normalizeOrigin = (origin) => origin?.replace(/\/$/, "");
+const configuredFrontendOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URLS,
+]
+  .filter(Boolean)
+  .flatMap((value) => value.split(","))
+  .map((value) => normalizeOrigin(value.trim()))
+  .filter(Boolean);
+
+const allowedOrigins = new Set([
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  process.env.FRONTEND_URL,
-].filter(Boolean);
+  "https://logi-match.vercel.app",
+  ...configuredFrontendOrigins,
+]);
+
+const isAllowedVercelPreview = (origin) => {
+  try {
+    const { hostname, protocol } = new URL(origin);
+    return (
+      protocol === "https:" &&
+      hostname.endsWith(".vercel.app") &&
+      (hostname === "logi-match.vercel.app" || hostname.startsWith("logi-match-"))
+    );
+  } catch {
+    return false;
+  }
+};
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      const normalizedOrigin = normalizeOrigin(origin);
+      if (
+        !normalizedOrigin ||
+        allowedOrigins.has(normalizedOrigin) ||
+        isAllowedVercelPreview(normalizedOrigin)
+      ) {
         return callback(null, true);
       }
+      console.error("Blocked by CORS:", normalizedOrigin);
       return callback(new Error("Not allowed by CORS"));
     },
   }),
 );
 app.use(express.json());
+
+const ensureChatMessagesTable = async () => {
+  if (chatMessagesTableReady) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id SERIAL PRIMARY KEY,
+      job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE,
+      sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      message TEXT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_job_created
+      ON chat_messages(job_id, created_at, id);
+  `);
+  chatMessagesTableReady = true;
+};
 
 const priceConfig = {
   dieselPricePerLitre: Number(process.env.PRICE_DIESEL_PER_LITRE || 95),
@@ -731,9 +779,15 @@ app.post("/api/bids", verifyToken, async (req, res) => {
       [job_id, provider_id, numericAmount],
     );
 
-    // 🚀 RESTORED: Alert Seeker of New Bid
-    const seekerQuery = `SELECT u.email, u.name, j.origin, j.destination FROM users u JOIN jobs j ON u.id = j.seeker_id WHERE j.id = $1`;
-    const seekerResult = await pool.query(seekerQuery, [job_id]);
+    // Alert seeker of new bid
+    const seekerQuery = `
+      SELECT seeker.email, seeker.name, j.origin, j.destination, provider.name AS provider_name
+      FROM users seeker
+      JOIN jobs j ON seeker.id = j.seeker_id
+      JOIN users provider ON provider.id = $2
+      WHERE j.id = $1
+    `;
+    const seekerResult = await pool.query(seekerQuery, [job_id, provider_id]);
 
     if (seekerResult.rows.length > 0) {
       const seeker = seekerResult.rows[0];
@@ -744,7 +798,7 @@ app.post("/api/bids", verifyToken, async (req, res) => {
             subject: `New Bid Received! (₹${numericAmount})`,
             html: `
               <h2>Hello ${seeker.name},</h2>
-              <p>You just received a new bid of <b>₹${numericAmount}</b> for your cargo from ${seeker.origin} to ${seeker.destination}.</p>
+              <p>You just received a new bid of <b>₹${numericAmount}</b> from <b>${seeker.provider_name}</b> for your cargo from ${seeker.origin} to ${seeker.destination}.</p>
               <p>Log in to your Profile to review and accept the offer.</p>
             `,
           });
@@ -809,6 +863,49 @@ app.put("/api/bids/:id/accept", verifyToken, async (req, res) => {
       client.release();
     }
 
+    if (process.env.RESEND_API_KEY) {
+      try {
+        const notificationResult = await pool.query(
+          `SELECT
+             j.origin, j.destination, j.weight_kg, j.pickup_window_start, j.pickup_window_end,
+             j.delivery_window_start, j.delivery_window_end, j.special_instructions,
+             b.amount,
+             seeker.name AS seeker_name, seeker.email AS seeker_email,
+             provider.name AS provider_name, provider.email AS provider_email
+           FROM jobs j
+           JOIN bids b ON b.job_id = j.id AND b.id = $1
+           JOIN users seeker ON seeker.id = j.seeker_id
+           JOIN users provider ON provider.id = b.provider_id
+           WHERE j.id = $2`,
+          [bidId, bid.job_id],
+        );
+
+        if (notificationResult.rows.length > 0) {
+          const job = notificationResult.rows[0];
+          await sendEmail({
+            to: job.provider_email,
+            subject: `Bid Accepted: ${job.origin} to ${job.destination}`,
+            html: `
+              <h2>Hello ${job.provider_name},</h2>
+              <p>Your bid of <b>₹${job.amount}</b> has been accepted.</p>
+              <h3>Shipment Details</h3>
+              <p><b>Route:</b> ${job.origin} to ${job.destination}</p>
+              <p><b>Weight:</b> ${job.weight_kg} kg</p>
+              <p><b>Pickup Window:</b> ${formatDateForManifest(job.pickup_window_start)} - ${formatDateForManifest(job.pickup_window_end)}</p>
+              <p><b>Delivery Window:</b> ${formatDateForManifest(job.delivery_window_start)} - ${formatDateForManifest(job.delivery_window_end)}</p>
+              <p><b>Special Instructions:</b> ${job.special_instructions || "None"}</p>
+              <h3>Seeker Contact</h3>
+              <p><b>Name:</b> ${job.seeker_name}</p>
+              <p><b>Email:</b> ${job.seeker_email}</p>
+              <p>Please log in to LogiMatch to view the full dispatch details and download the freight manifest.</p>
+            `,
+          });
+        }
+      } catch (emailError) {
+        console.error("Bid acceptance email failed:", emailError.message);
+      }
+    }
+
     res.status(200).json({ message: "Bid accepted and job assigned!" });
   } catch (error) {
     console.error("Error accepting bid:", error.message);
@@ -836,6 +933,44 @@ app.put("/api/jobs/:id/track", verifyToken, async (req, res) => {
     }
 
     await pool.query(milestoneQuery, queryParams);
+
+    if ((status === "delivered" || status === "completed") && process.env.RESEND_API_KEY) {
+      try {
+        const notificationResult = await pool.query(
+          `SELECT
+             j.origin, j.destination, j.weight_kg,
+             seeker.name AS seeker_name, seeker.email AS seeker_email,
+             provider.name AS provider_name, provider.email AS provider_email
+           FROM jobs j
+           JOIN bids b ON b.job_id = j.id AND b.status = 'accepted'
+           JOIN users seeker ON seeker.id = j.seeker_id
+           JOIN users provider ON provider.id = b.provider_id
+           WHERE j.id = $1`,
+          [jobId],
+        );
+
+        if (notificationResult.rows.length > 0) {
+          const job = notificationResult.rows[0];
+          const subject = `Job Completed: ${job.origin} to ${job.destination}`;
+          const html = `
+            <h2>Shipment Completed</h2>
+            <p>The shipment from <b>${job.origin}</b> to <b>${job.destination}</b> has been marked as completed.</p>
+            <p><b>Weight:</b> ${job.weight_kg} kg</p>
+            <p><b>Seeker:</b> ${job.seeker_name}</p>
+            <p><b>Provider:</b> ${job.provider_name}</p>
+            <p>Please log in to LogiMatch to review the completed job and update ratings if needed.</p>
+          `;
+
+          await Promise.all([
+            sendEmail({ to: job.seeker_email, subject, html }),
+            sendEmail({ to: job.provider_email, subject, html }),
+          ]);
+        }
+      } catch (emailError) {
+        console.error("Completion email failed:", emailError.message);
+      }
+    }
+
     res
       .status(200)
       .json({ message: "Logistics milestone updated successfully." });
@@ -848,12 +983,119 @@ app.put("/api/jobs/:id/track", verifyToken, async (req, res) => {
 });
 
 // ---------------------------------
+// Route: Job Chat Thread
+// ---------------------------------
+app.get("/api/jobs/:id/messages", verifyToken, async (req, res) => {
+  try {
+    const jobId = req.params.id;
+    await ensureChatMessagesTable();
+
+    const accessResult = await pool.query(
+      `SELECT j.seeker_id, b.provider_id
+       FROM jobs j
+       JOIN bids b ON b.job_id = j.id AND b.status = 'accepted'
+       WHERE j.id = $1`,
+      [jobId],
+    );
+
+    if (accessResult.rows.length === 0) {
+      return res.status(404).json({ error: "Chat is available after bid acceptance." });
+    }
+
+    const access = accessResult.rows[0];
+    const isParticipant =
+      Number(access.seeker_id) === Number(req.user.id) ||
+      Number(access.provider_id) === Number(req.user.id);
+
+    if (!isParticipant) {
+      return res.status(403).json({ error: "You cannot access this job chat." });
+    }
+
+    const messagesResult = await pool.query(
+      `SELECT
+         cm.id, cm.job_id, cm.sender_id, cm.message, cm.created_at,
+         u.name AS sender_name, u.role AS sender_role
+       FROM chat_messages cm
+       JOIN users u ON u.id = cm.sender_id
+       WHERE cm.job_id = $1
+       ORDER BY cm.created_at ASC, cm.id ASC
+       LIMIT 100`,
+      [jobId],
+    );
+
+    res.status(200).json(messagesResult.rows);
+  } catch (error) {
+    console.error("Chat fetch error:", error.message);
+    res.status(500).json({ error: "Server error fetching chat messages" });
+  }
+});
+
+app.post("/api/jobs/:id/messages", verifyToken, async (req, res) => {
+  try {
+    const jobId = req.params.id;
+    const message = String(req.body.message || "").trim();
+
+    if (!message) {
+      return res.status(400).json({ error: "Message cannot be empty." });
+    }
+
+    if (message.length > 1000) {
+      return res.status(400).json({ error: "Message is too long." });
+    }
+
+    await ensureChatMessagesTable();
+
+    const accessResult = await pool.query(
+      `SELECT j.seeker_id, b.provider_id
+       FROM jobs j
+       JOIN bids b ON b.job_id = j.id AND b.status = 'accepted'
+       WHERE j.id = $1`,
+      [jobId],
+    );
+
+    if (accessResult.rows.length === 0) {
+      return res.status(404).json({ error: "Chat is available after bid acceptance." });
+    }
+
+    const access = accessResult.rows[0];
+    const isParticipant =
+      Number(access.seeker_id) === Number(req.user.id) ||
+      Number(access.provider_id) === Number(req.user.id);
+
+    if (!isParticipant) {
+      return res.status(403).json({ error: "You cannot send messages in this chat." });
+    }
+
+    const insertResult = await pool.query(
+      `INSERT INTO chat_messages (job_id, sender_id, message)
+       VALUES ($1, $2, $3)
+       RETURNING id, job_id, sender_id, message, created_at`,
+      [jobId, req.user.id, message],
+    );
+
+    const senderResult = await pool.query(
+      "SELECT name AS sender_name, role AS sender_role FROM users WHERE id = $1",
+      [req.user.id],
+    );
+
+    res.status(201).json({
+      ...insertResult.rows[0],
+      sender_name: senderResult.rows[0]?.sender_name || "User",
+      sender_role: senderResult.rows[0]?.sender_role || req.user.role,
+    });
+  } catch (error) {
+    console.error("Chat send error:", error.message);
+    res.status(500).json({ error: "Server error sending chat message" });
+  }
+});
+
+// ---------------------------------
 // Route: Get Current User Profile
 // ---------------------------------
 app.get("/api/users/me", verifyToken, async (req, res) => {
   try {
     const query = `
-      SELECT name, email, role, profile_photo, banner_photo, bio, license_file_url, is_public, company_name, business_doc_url, rating_sum, rating_count
+      SELECT id, name, email, role, profile_photo, banner_photo, bio, license_file_url, is_public, company_name, business_doc_url, rating_sum, rating_count
       FROM users WHERE id = $1
     `;
     const result = await pool.query(query, [req.user.id]);
@@ -1057,12 +1299,13 @@ app.get("/api/profile/won-jobs", verifyToken, async (req, res) => {
 app.get("/api/insights/summary", verifyToken, async (req, res) => {
   try {
     if (req.user.role === "seeker") {
-      const [summaryResult, routeResult, statusResult] = await Promise.all([
+      const [summaryResult, routeResult, statusResult, recordsResult] =
+        await Promise.all([
         pool.query(
           `SELECT
              COUNT(*)::int AS total_jobs,
-             COUNT(*) FILTER (WHERE j.status IN ('assigned', 'picked_up', 'delivered'))::int AS awarded_jobs,
-             COUNT(*) FILTER (WHERE j.status = 'delivered')::int AS completed_jobs,
+             COUNT(*) FILTER (WHERE j.status IN ('assigned', 'picked_up', 'delivered', 'completed'))::int AS awarded_jobs,
+             COUNT(*) FILTER (WHERE j.status IN ('delivered', 'completed'))::int AS completed_jobs,
              COALESCE(SUM(b.amount) FILTER (WHERE b.status = 'accepted'), 0)::numeric AS total_spend,
              COALESCE(AVG(b.amount) FILTER (WHERE b.status = 'accepted'), 0)::numeric AS average_accepted_price
            FROM jobs j
@@ -1092,6 +1335,35 @@ app.get("/api/insights/summary", verifyToken, async (req, res) => {
            ORDER BY count DESC`,
           [req.user.id],
         ),
+        pool.query(
+          `SELECT
+             j.id AS job_id,
+             SPLIT_PART(j.origin, ',', 1) AS origin_city,
+             SPLIT_PART(j.destination, ',', 1) AS destination_city,
+             CONCAT(SPLIT_PART(j.origin, ',', 1), ' to ', SPLIT_PART(j.destination, ',', 1)) AS route,
+             j.status,
+             COALESCE(j.weight_kg, 0)::numeric AS weight_kg,
+             COALESCE(j.seeker_ask, 0)::numeric AS seeker_ask,
+             COALESCE(MAX(b.amount) FILTER (WHERE b.status = 'accepted'), 0)::numeric AS accepted_price,
+             COALESCE(MIN(b.amount), 0)::numeric AS lowest_bid,
+             COUNT(b.id)::int AS bid_count,
+             COALESCE(
+               ROUND(
+                 EXTRACT(EPOCH FROM (j.actual_delivery_time - j.actual_pickup_time)) / 86400,
+                 2
+               ),
+               0
+             )::numeric AS transit_days,
+             TO_CHAR(j.created_at, 'Mon YYYY') AS created_month,
+             TO_CHAR(j.created_at, 'YYYY-MM-DD') AS created_date
+           FROM jobs j
+           LEFT JOIN bids b ON b.job_id = j.id
+           WHERE j.seeker_id = $1
+           GROUP BY j.id
+           ORDER BY j.created_at DESC, j.id DESC
+           LIMIT 100`,
+          [req.user.id],
+        ),
       ]);
 
       return res.status(200).json({
@@ -1099,10 +1371,12 @@ app.get("/api/insights/summary", verifyToken, async (req, res) => {
         summary: summaryResult.rows[0],
         routes: routeResult.rows,
         statuses: statusResult.rows,
+        records: recordsResult.rows,
       });
     }
 
-    const [summaryResult, routeResult, statusResult] = await Promise.all([
+    const [summaryResult, routeResult, statusResult, recordsResult] =
+      await Promise.all([
       pool.query(
         `SELECT
            COUNT(*)::int AS total_bids,
@@ -1143,6 +1417,28 @@ app.get("/api/insights/summary", verifyToken, async (req, res) => {
          ORDER BY count DESC`,
         [req.user.id],
       ),
+      pool.query(
+        `SELECT
+           b.id AS bid_id,
+           j.id AS job_id,
+           SPLIT_PART(j.origin, ',', 1) AS origin_city,
+           SPLIT_PART(j.destination, ',', 1) AS destination_city,
+           CONCAT(SPLIT_PART(j.origin, ',', 1), ' to ', SPLIT_PART(j.destination, ',', 1)) AS route,
+           j.status AS job_status,
+           b.status AS bid_status,
+           COALESCE(b.amount, 0)::numeric AS bid_amount,
+           CASE WHEN b.status = 'accepted' THEN COALESCE(b.amount, 0) ELSE 0 END::numeric AS earnings,
+           CASE WHEN b.status = 'accepted' THEN 1 ELSE 0 END::int AS won,
+           COALESCE(j.weight_kg, 0)::numeric AS weight_kg,
+           TO_CHAR(b.created_at, 'Mon YYYY') AS created_month,
+           TO_CHAR(b.created_at, 'YYYY-MM-DD') AS created_date
+         FROM bids b
+         JOIN jobs j ON j.id = b.job_id
+         WHERE b.provider_id = $1
+         ORDER BY b.created_at DESC, b.id DESC
+         LIMIT 100`,
+        [req.user.id],
+      ),
     ]);
 
     res.status(200).json({
@@ -1150,6 +1446,7 @@ app.get("/api/insights/summary", verifyToken, async (req, res) => {
       summary: summaryResult.rows[0],
       routes: routeResult.rows,
       statuses: statusResult.rows,
+      records: recordsResult.rows,
     });
   } catch (error) {
     console.error("Insights error:", error.message);

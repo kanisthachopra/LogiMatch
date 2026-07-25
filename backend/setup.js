@@ -62,6 +62,15 @@ const createTables = async () => {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
 
+    -- 4. JOB CHAT MESSAGES TABLE
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id SERIAL PRIMARY KEY,
+      job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE,
+      sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      message TEXT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    );
+
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT false;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS otp VARCHAR(6);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMP WITH TIME ZONE;
@@ -92,6 +101,9 @@ const createTables = async () => {
 
     ALTER TABLE bids ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
     ALTER TABLE bids ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_job_created
+      ON chat_messages(job_id, created_at, id);
   `;
 
   try {
