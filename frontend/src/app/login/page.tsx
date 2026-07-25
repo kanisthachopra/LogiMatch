@@ -12,6 +12,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -135,14 +137,24 @@ export default function LoginPage() {
                       Forgot Password?
                     </button>
                   </div>
-                  <input
-                    type="password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((visible) => !visible)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      className="absolute inset-y-0 right-3 flex items-center text-lg text-gray-500 hover:text-gray-900"
+                    >
+                      {showPassword ? "◉" : "◎"}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -249,14 +261,26 @@ export default function LoginPage() {
                 <label className="block text-sm font-bold text-gray-800 mb-1">
                   New Password
                 </label>
-                <input
-                  type="password"
-                  placeholder="••••••••"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  required
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
-                />
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((visible) => !visible)}
+                    aria-label={
+                      showNewPassword ? "Hide new password" : "Show new password"
+                    }
+                    className="absolute inset-y-0 right-3 flex items-center text-lg text-gray-500 hover:text-gray-900"
+                  >
+                    {showNewPassword ? "◉" : "◎"}
+                  </button>
+                </div>
               </div>
 
               <button

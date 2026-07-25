@@ -10,11 +10,19 @@ export default function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isProvider, setIsProvider] = useState(false); // Tick box state
   const [otp, setOtp] = useState("");
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (password !== confirmPassword) {
+      alert("Passwords do not match. Please re-enter them.");
+      return;
+    }
 
     // ✨ STEP 4 LOGIC: We map the checkbox to the exact string role the DB expects
     const payload = {
@@ -118,14 +126,54 @@ export default function RegisterPage() {
                 <label className="block text-sm font-bold text-gray-800 mb-1">
                   Password
                 </label>
-                <input
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
-                />
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((visible) => !visible)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    className="absolute inset-y-0 right-3 flex items-center text-lg text-gray-500 hover:text-gray-900"
+                  >
+                    {showPassword ? "◉" : "◎"}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-1">
+                  Confirm Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg bg-white text-gray-950 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowConfirmPassword((visible) => !visible)
+                    }
+                    aria-label={
+                      showConfirmPassword
+                        ? "Hide confirm password"
+                        : "Show confirm password"
+                    }
+                    className="absolute inset-y-0 right-3 flex items-center text-lg text-gray-500 hover:text-gray-900"
+                  >
+                    {showConfirmPassword ? "◉" : "◎"}
+                  </button>
+                </div>
               </div>
 
               {/* ⚡ STEP 4 TICK BOX: Driver vs Seeker */}

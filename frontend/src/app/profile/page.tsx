@@ -11,10 +11,12 @@ function DriverTrackingCard({
   handleUpdateLocation,
   handleDownloadManifest,
   formatDate,
+  currentUserId,
 }: any) {
   const [locationText, setLocationText] = useState("");
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [isTyping, setIsTyping] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   // Debounced Autocomplete for Waypoint Updates
   useEffect(() => {
@@ -69,6 +71,12 @@ function DriverTrackingCard({
               className="mt-3 bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 px-4 py-2 rounded-lg font-black text-xs transition-colors"
             >
               Download Manifest
+            </button>
+            <button
+              onClick={() => setIsChatOpen((open) => !open)}
+              className="mt-3 md:ml-2 bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg font-black text-xs transition-colors"
+            >
+              {isChatOpen ? "Hide Chat" : "Open Chat"}
             </button>
           </div>
         </div>
@@ -229,7 +237,168 @@ function DriverTrackingCard({
             )}
           </div>
         </div>
+
+        {isChatOpen && (
+          <div className="mt-6 border-t border-gray-100 pt-6">
+            <JobChatThread jobId={job.job_id} currentUserId={currentUserId} />
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function JobChatThread({ jobId, currentUserId }: any) {
+  const [messages, setMessages] = useState<any[]>([]);
+  const [messageText, setMessageText] = useState("");
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [chatError, setChatError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchMessages = async () => {
+      try {
+        setIsLoadingMessages(true);
+        const response = await fetch(apiUrl(`/api/jobs/${jobId}/messages`), {
+          headers: authHeaders(),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || "Could not load chat.");
+        }
+        if (isMounted) {
+          setMessages(data);
+          setChatError("");
+        }
+      } catch (error: any) {
+        if (isMounted) setChatError(error.message || "Could not load chat.");
+      } finally {
+        if (isMounted) setIsLoadingMessages(false);
+      }
+    };
+
+    fetchMessages();
+    const intervalId = window.setInterval(fetchMessages, 15000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [jobId]);
+
+  const sendMessage = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmedMessage = messageText.trim();
+    if (!trimmedMessage || isSendingMessage) return;
+
+    try {
+      setIsSendingMessage(true);
+      const response = await fetch(apiUrl(`/api/jobs/${jobId}/messages`), {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ message: trimmedMessage }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Message could not be sent.");
+      }
+      setMessages((currentMessages) => [...currentMessages, data]);
+      setMessageText("");
+      setChatError("");
+    } catch (error: any) {
+      setChatError(error.message || "Message could not be sent.");
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
+  return (
+    <div className="bg-white border border-blue-100 rounded-xl shadow-sm overflow-hidden">
+      <div className="px-4 py-3 bg-blue-50 border-b border-blue-100 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-widest text-blue-800">
+            Shipment Chat
+          </p>
+          <p className="text-xs font-bold text-blue-600">
+            Visible only to the customer and accepted transporter.
+          </p>
+        </div>
+        {isLoadingMessages && (
+          <span className="text-xs font-bold text-blue-500">Refreshing...</span>
+        )}
+      </div>
+
+      <div className="h-64 overflow-y-auto p-4 space-y-3 bg-gray-50">
+        {chatError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm font-bold">
+            {chatError}
+          </div>
+        )}
+        {messages.length === 0 && !chatError ? (
+          <div className="h-full flex items-center justify-center text-center">
+            <p className="text-sm font-bold text-gray-500">
+              No messages yet. Start the dispatch conversation here.
+            </p>
+          </div>
+        ) : (
+          messages.map((message: any) => {
+            const isMine = Number(message.sender_id) === Number(currentUserId);
+            return (
+              <div
+                key={message.id}
+                className={`flex ${isMine ? "justify-end" : "justify-start"}`}
+              >
+                <div
+                  className={`max-w-[82%] rounded-xl px-4 py-3 shadow-sm ${isMine ? "bg-blue-600 text-white" : "bg-white text-gray-900 border border-gray-200"}`}
+                >
+                  <div className="flex items-center justify-between gap-4 mb-1">
+                    <span
+                      className={`text-xs font-black uppercase tracking-widest ${isMine ? "text-blue-100" : "text-gray-500"}`}
+                    >
+                      {isMine ? "You" : message.sender_name}
+                    </span>
+                    <span
+                      className={`text-[11px] font-bold ${isMine ? "text-blue-100" : "text-gray-400"}`}
+                    >
+                      {new Date(message.created_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                  <p className="text-sm font-medium whitespace-pre-wrap break-words">
+                    {message.message}
+                  </p>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      <form onSubmit={sendMessage} className="p-4 border-t border-gray-100">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <input
+            value={messageText}
+            onChange={(event) => setMessageText(event.target.value)}
+            maxLength={1000}
+            placeholder="Type a dispatch update or question..."
+            className="flex-1 px-4 py-3 border border-gray-300 rounded-lg bg-white text-gray-900 font-medium outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            type="submit"
+            disabled={!messageText.trim() || isSendingMessage}
+            className="bg-blue-600 disabled:bg-gray-300 text-white font-black px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            {isSendingMessage ? "Sending" : "Send"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -296,10 +465,257 @@ function BarList({ title, rows, valueKey, labelKey = "count", money = false }: a
   );
 }
 
-function InsightsPanel({ insights }: any) {
-  const money = (value: number | string) =>
-    `₹${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
+function aggregateRecords(records: any[], xKey: string, yKey: string, mode: string) {
+  const buckets = new Map<string, { label: string; total: number; count: number }>();
 
+  records.forEach((record) => {
+    const label = String(record[xKey] || "Unknown");
+    const metricValue = yKey === "count" ? 1 : Number(record[yKey] || 0);
+    const current = buckets.get(label) || { label, total: 0, count: 0 };
+    current.total += Number.isFinite(metricValue) ? metricValue : 0;
+    current.count += 1;
+    buckets.set(label, current);
+  });
+
+  return Array.from(buckets.values())
+    .map((bucket) => ({
+      label: bucket.label,
+      value:
+        mode === "average"
+          ? bucket.count
+            ? bucket.total / bucket.count
+            : 0
+          : mode === "count"
+            ? bucket.count
+            : bucket.total,
+    }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 8);
+}
+
+function aggregateTimeline(records: any[], yKey: string) {
+  const buckets = new Map<string, { label: string; value: number; sortDate: string }>();
+
+  records.forEach((record) => {
+    const label = String(record.created_month || "Unknown");
+    const current = buckets.get(label) || {
+      label,
+      value: 0,
+      sortDate: record.created_date || label,
+    };
+    current.value += Number(record[yKey] || 0);
+    buckets.set(label, current);
+  });
+
+  return Array.from(buckets.values())
+    .sort((a, b) => a.sortDate.localeCompare(b.sortDate))
+    .slice(-6);
+}
+
+function moneyLabel(value: number | string) {
+  return `₹${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
+}
+
+function ChartValue({ value, money = false }: any) {
+  return (
+    <span className="text-xs font-black text-gray-600 whitespace-nowrap">
+      {money ? moneyLabel(value) : Math.round(Number(value || 0)).toLocaleString("en-IN")}
+    </span>
+  );
+}
+
+function VerticalBarChart({ title, rows, valueKey, labelBuilder, money = false }: any) {
+  const max = Math.max(1, ...rows.map((row: any) => Number(row[valueKey] || 0)));
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+      <h4 className="text-lg font-black text-gray-900 mb-5">{title}</h4>
+      {rows.length === 0 ? (
+        <p className="text-sm font-bold text-gray-500">No chart data yet.</p>
+      ) : (
+        <div className="h-64 flex items-end gap-3 border-l border-b border-gray-200 pl-3 pb-3">
+          {rows.slice(0, 6).map((row: any, index: number) => {
+            const value = Number(row[valueKey] || 0);
+            const label = labelBuilder ? labelBuilder(row) : row.label;
+            return (
+              <div key={`${label}-${index}`} className="flex-1 min-w-0 flex flex-col items-center justify-end gap-2 h-full">
+                <ChartValue value={value} money={money} />
+                <div
+                  className="w-full max-w-16 bg-blue-600 rounded-t-lg shadow-sm hover:bg-blue-700 transition-colors"
+                  style={{ height: `${Math.max((value / max) * 78, 8)}%` }}
+                  title={`${label}: ${money ? moneyLabel(value) : value}`}
+                />
+                <p className="text-[11px] font-black text-gray-500 text-center leading-tight w-full truncate">
+                  {label}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LineTrendChart({ title, rows, valueKey, labelKey, money = false }: any) {
+  const values = rows.map((row: any) => Number(row[valueKey] || 0));
+  const max = Math.max(1, ...values);
+  const width = 520;
+  const height = 180;
+  const points = rows.map((row: any, index: number) => {
+    const x = rows.length === 1 ? width / 2 : (index / (rows.length - 1)) * width;
+    const y = height - (Number(row[valueKey] || 0) / max) * 145 - 15;
+    return `${x},${y}`;
+  });
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+      <h4 className="text-lg font-black text-gray-900 mb-5">{title}</h4>
+      {rows.length === 0 ? (
+        <p className="text-sm font-bold text-gray-500">No trend data yet.</p>
+      ) : (
+        <>
+          <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-48 overflow-visible">
+            <polyline
+              fill="none"
+              stroke="#2563eb"
+              strokeWidth="5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              points={points.join(" ")}
+            />
+            {points.map((point: string, index: number) => {
+              const [cx, cy] = point.split(",").map(Number);
+              return (
+                <g key={`${point}-${index}`}>
+                  <circle cx={cx} cy={cy} r="6" fill="#ffffff" stroke="#2563eb" strokeWidth="4" />
+                  <text x={cx} y={cy - 12} textAnchor="middle" className="fill-gray-700 text-[20px] font-bold">
+                    {money ? moneyLabel(values[index]).replace("₹", "") : Math.round(values[index])}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+          <div className="grid gap-2 mt-2" style={{ gridTemplateColumns: `repeat(${Math.min(rows.length, 6)}, minmax(0, 1fr))` }}>
+            {rows.slice(0, 6).map((row: any, index: number) => (
+              <p key={`${row[labelKey]}-${index}`} className="text-[11px] font-black text-gray-500 text-center truncate">
+                {row[labelKey]}
+              </p>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CustomChartBuilder({ records, isSeeker }: any) {
+  const xOptions = [
+    { key: "route", label: "Route" },
+    { key: "origin_city", label: "Origin City" },
+    { key: "destination_city", label: "Destination City" },
+    { key: isSeeker ? "status" : "bid_status", label: isSeeker ? "Shipment Status" : "Bid Status" },
+    { key: "created_month", label: "Month" },
+  ];
+  const yOptions = isSeeker
+    ? [
+        { key: "accepted_price", label: "Accepted Price", money: true },
+        { key: "seeker_ask", label: "Seeker Ask", money: true },
+        { key: "weight_kg", label: "Cargo Weight" },
+        { key: "bid_count", label: "Bid Count" },
+        { key: "transit_days", label: "Transit Days" },
+        { key: "count", label: "Shipment Count" },
+      ]
+    : [
+        { key: "bid_amount", label: "Bid Amount", money: true },
+        { key: "earnings", label: "Earnings", money: true },
+        { key: "weight_kg", label: "Cargo Weight" },
+        { key: "won", label: "Won Bids" },
+        { key: "count", label: "Bid Count" },
+      ];
+
+  const [xKey, setXKey] = useState(xOptions[0].key);
+  const [yKey, setYKey] = useState(yOptions[0].key);
+  const [mode, setMode] = useState("average");
+  const selectedMetric = yOptions.find((option) => option.key === yKey) || yOptions[0];
+  const chartRows = aggregateRecords(records || [], xKey, yKey, yKey === "count" ? "count" : mode);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
+        <div>
+          <h4 className="text-lg font-black text-gray-900">Custom Historical Graph Builder</h4>
+          <p className="text-sm font-bold text-gray-500">
+            Choose axes from your own shipment history and generate a graph.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <select
+            value={xKey}
+            onChange={(event) => setXKey(event.target.value)}
+            className="px-3 py-2 rounded-lg border border-gray-300 bg-gray-50 text-sm font-bold text-gray-900"
+          >
+            {xOptions.map((option) => (
+              <option key={option.key} value={option.key}>
+                X: {option.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={yKey}
+            onChange={(event) => setYKey(event.target.value)}
+            className="px-3 py-2 rounded-lg border border-gray-300 bg-gray-50 text-sm font-bold text-gray-900"
+          >
+            {yOptions.map((option) => (
+              <option key={option.key} value={option.key}>
+                Y: {option.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={mode}
+            onChange={(event) => setMode(event.target.value)}
+            disabled={yKey === "count"}
+            className="px-3 py-2 rounded-lg border border-gray-300 bg-gray-50 text-sm font-bold text-gray-900 disabled:text-gray-400"
+          >
+            <option value="average">Average</option>
+            <option value="sum">Total</option>
+          </select>
+        </div>
+      </div>
+
+      {chartRows.length === 0 ? (
+        <div className="border border-dashed border-gray-300 rounded-xl p-8 text-center">
+          <p className="text-sm font-bold text-gray-500">No historical records available for this graph yet.</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {chartRows.map((row) => {
+            const max = Math.max(1, ...chartRows.map((item) => item.value));
+            return (
+              <div key={row.label}>
+                <div className="flex justify-between gap-3 text-sm font-bold mb-1">
+                  <span className="text-gray-800 truncate">{row.label}</span>
+                  <span className="text-gray-600 whitespace-nowrap">
+                    {selectedMetric.money ? moneyLabel(row.value) : Math.round(row.value).toLocaleString("en-IN")}
+                  </span>
+                </div>
+                <div className="h-4 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-green-600 rounded-full"
+                    style={{ width: `${Math.max((row.value / max) * 100, 8)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InsightsPanel({ insights }: any) {
   if (!insights) {
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
@@ -310,6 +726,11 @@ function InsightsPanel({ insights }: any) {
 
   const summary = insights.summary || {};
   const isSeeker = insights.role === "seeker";
+  const records = insights.records || [];
+  const timelineRows = aggregateTimeline(
+    records,
+    isSeeker ? "accepted_price" : "earnings",
+  );
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -320,12 +741,12 @@ function InsightsPanel({ insights }: any) {
             <StatCard label="Awarded Jobs" value={summary.awarded_jobs || 0} />
             <StatCard
               label="Total Spend"
-              value={money(summary.total_spend)}
+              value={moneyLabel(summary.total_spend)}
               tone="green"
             />
             <StatCard
               label="Avg Accepted"
-              value={money(summary.average_accepted_price)}
+              value={moneyLabel(summary.average_accepted_price)}
               tone="yellow"
             />
           </>
@@ -340,7 +761,7 @@ function InsightsPanel({ insights }: any) {
             />
             <StatCard
               label="Earnings"
-              value={money(summary.total_earnings)}
+              value={moneyLabel(summary.total_earnings)}
               tone="green"
             />
           </>
@@ -348,10 +769,13 @@ function InsightsPanel({ insights }: any) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <BarList
+        <VerticalBarChart
           title={isSeeker ? "Route Spend Benchmarks" : "Route Bid Patterns"}
           rows={insights.routes || []}
           valueKey={isSeeker ? "average_price" : "average_bid"}
+          labelBuilder={(row: any) =>
+            `${row.origin.split(",")[0]} to ${row.destination.split(",")[0]}`
+          }
           money
         />
         <BarList
@@ -360,6 +784,16 @@ function InsightsPanel({ insights }: any) {
           valueKey="count"
         />
       </div>
+
+      <LineTrendChart
+        title={isSeeker ? "Monthly Spend Trend" : "Monthly Earnings Trend"}
+        rows={timelineRows}
+        valueKey="value"
+        labelKey="label"
+        money
+      />
+
+      <CustomChartBuilder records={records} isSeeker={isSeeker} />
     </div>
   );
 }
@@ -386,6 +820,11 @@ export default function ProfilePage() {
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [expandedCustomerJobId, setExpandedCustomerJobId] = useState<
+    string | number | null
+  >(null);
 
   useEffect(() => {
     const fetchProfileData = async () => {
@@ -813,27 +1252,55 @@ export default function ProfilePage() {
                 <label className="block text-sm font-bold text-gray-800 mb-2">
                   Current Password
                 </label>
-                <input
-                  type="password"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-gray-900 outline-none font-medium transition-all"
-                />
+                <div className="relative">
+                  <input
+                    type={showCurrentPassword ? "text" : "password"}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-gray-900 outline-none font-medium transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowCurrentPassword((visible) => !visible)
+                    }
+                    aria-label={
+                      showCurrentPassword
+                        ? "Hide current password"
+                        : "Show current password"
+                    }
+                    className="absolute inset-y-0 right-3 flex items-center text-lg text-gray-500 hover:text-gray-900"
+                  >
+                    {showCurrentPassword ? "◉" : "◎"}
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-bold text-gray-800 mb-2">
                   New Secure Password
                 </label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-gray-900 outline-none font-medium transition-all"
-                />
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? "text" : "password"}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg bg-gray-50 focus:bg-white focus:ring-2 focus:ring-gray-900 outline-none font-medium transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword((visible) => !visible)}
+                    aria-label={
+                      showNewPassword ? "Hide new password" : "Show new password"
+                    }
+                    className="absolute inset-y-0 right-3 flex items-center text-lg text-gray-500 hover:text-gray-900"
+                  >
+                    {showNewPassword ? "◉" : "◎"}
+                  </button>
+                </div>
               </div>
               <button
                 type="submit"
@@ -867,36 +1334,107 @@ export default function ProfilePage() {
                     {myJobs
                       .filter((j: any) => j.status !== "open")
                       .map((job: any, index: number) => {
-                        const isAssigned =
-                          job.status === "assigned" ||
-                          job.status === "delivered";
-                        const winningBid = isAssigned
+                        const isInDispatch = [
+                          "assigned",
+                          "picked_up",
+                          "delivered",
+                          "completed",
+                        ].includes(job.status);
+                        const winningBid = isInDispatch
                           ? job.bids.find((b: any) => b.status === "accepted")
                           : null;
+                        const isExpanded = expandedCustomerJobId === job.id;
+                        const statusTone =
+                          job.status === "delivered" || job.status === "completed"
+                            ? "bg-green-100 text-green-800"
+                            : job.status === "picked_up"
+                              ? "bg-blue-100 text-blue-800"
+                              : job.status === "assigned"
+                                ? "bg-indigo-100 text-indigo-800"
+                                : "bg-gray-100 text-gray-800";
+                        const borderTone =
+                          job.status === "delivered" || job.status === "completed"
+                            ? "border-green-500"
+                            : job.status === "picked_up"
+                              ? "border-blue-500"
+                              : job.status === "assigned"
+                                ? "border-indigo-500"
+                                : "border-gray-300";
+                        const progressSteps = [
+                          {
+                            label: "Assigned",
+                            done: ["assigned", "picked_up", "delivered", "completed"].includes(
+                              job.status,
+                            ),
+                          },
+                          {
+                            label: "Picked Up",
+                            done: ["picked_up", "delivered", "completed"].includes(job.status),
+                          },
+                          {
+                            label: "Delivered",
+                            done: ["delivered", "completed"].includes(job.status),
+                          },
+                        ];
 
                         return (
                           <div
                             key={`myjob-${job.id}-${index}`}
-                            className={`bg-white rounded-xl shadow-md overflow-hidden border-l-8 ${job.status === "delivered" ? "border-green-500" : job.status === "assigned" ? "border-blue-500" : "border-gray-300"}`}
+                            className={`bg-white rounded-xl shadow-md overflow-hidden border-l-8 ${borderTone}`}
                           >
                             <div className="p-6">
-                              <div className="flex justify-between items-start mb-4">
-                                <h4 className="text-xl font-black text-gray-900">
-                                  {job.origin.split(",")[0]} ➔{" "}
-                                  {job.destination.split(",")[0]}
-                                </h4>
-                                <span
-                                  className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${job.status === "delivered" ? "bg-green-100 text-green-800" : job.status === "assigned" ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-800"}`}
-                                >
-                                  {job.status === "open"
-                                    ? "Awaiting Auto-Resolve"
-                                    : job.status}
-                                </span>
+                              <div className="flex flex-col md:flex-row justify-between items-start gap-4 mb-4">
+                                <div>
+                                  <h4 className="text-xl font-black text-gray-900">
+                                    {job.origin.split(",")[0]} ➔{" "}
+                                    {job.destination.split(",")[0]}
+                                  </h4>
+                                  <p className="text-sm text-gray-500 font-bold mt-1">
+                                    {winningBid
+                                      ? `Accepted at ₹${winningBid.amount}`
+                                      : "Provider assignment pending"}
+                                  </p>
+                                </div>
+                                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+                                  <span
+                                    className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider text-center ${statusTone}`}
+                                  >
+                                    {job.status === "open"
+                                      ? "Awaiting Auto-Resolve"
+                                      : job.status.replace("_", " ")}
+                                  </span>
+                                  {isInDispatch && winningBid && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setExpandedCustomerJobId(
+                                          isExpanded ? null : job.id,
+                                        )
+                                      }
+                                      className="px-4 py-2 rounded-lg border border-blue-200 text-blue-700 hover:bg-blue-50 font-black text-xs transition-colors"
+                                    >
+                                      {isExpanded ? "Hide Tracking" : "Track Shipment"}
+                                    </button>
+                                  )}
+                                </div>
                               </div>
 
                               {/* Tracking Box */}
-                              {isAssigned && winningBid && (
+                              {isInDispatch && winningBid && (
                                 <div className="bg-gray-50 p-5 rounded-lg border border-gray-200 mt-4">
+                                  <div className="grid grid-cols-3 gap-2 mb-5">
+                                    {progressSteps.map((step: any) => (
+                                      <div
+                                        key={step.label}
+                                        className={`rounded-lg border px-2 py-3 text-center ${step.done ? "bg-blue-50 border-blue-200 text-blue-800" : "bg-white border-gray-200 text-gray-400"}`}
+                                      >
+                                        <p className="text-xs font-black uppercase tracking-widest">
+                                          {step.label}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     <div>
                                       <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
@@ -926,12 +1464,13 @@ export default function ProfilePage() {
                                     </div>
                                     <div className="border-l-0 md:border-l-2 border-gray-200 md:pl-6 flex flex-col justify-center">
                                       <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">
-                                        Live GPS Location
+                                        Current Shipment Location
                                       </p>
                                       <div className="flex items-center gap-2">
                                         <span
                                           className={
-                                            job.status === "delivered"
+                                            job.status === "delivered" ||
+                                            job.status === "completed"
                                               ? "text-green-500 animate-pulse text-2xl"
                                               : "text-blue-500 animate-pulse text-2xl"
                                           }
@@ -939,11 +1478,77 @@ export default function ProfilePage() {
                                           📍
                                         </span>
                                         <p className="font-black text-xl text-gray-900">
-                                          {job.current_location}
+                                          {job.current_location ||
+                                            (job.status === "assigned"
+                                              ? "Awaiting pickup at origin"
+                                              : job.destination)}
                                         </p>
                                       </div>
+                                      {job.status === "picked_up" && (
+                                        <p className="text-sm font-bold text-blue-700 mt-2">
+                                          Cargo is in transit. The provider can update
+                                          the waypoint from their dispatch panel.
+                                        </p>
+                                      )}
                                     </div>
                                   </div>
+
+                                  {isExpanded && (
+                                    <div className="mt-5 pt-5 border-t border-gray-200 grid grid-cols-1 lg:grid-cols-2 gap-5">
+                                      <div className="bg-white border border-gray-200 rounded-lg p-4">
+                                        <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
+                                          Schedule & Logged Times
+                                        </p>
+                                        <div className="space-y-2 text-sm font-bold text-gray-800">
+                                          <p>
+                                            Target Pickup:{" "}
+                                            <span className="text-gray-600">
+                                              {formatDate(job.pickup_window_start)}
+                                            </span>
+                                          </p>
+                                          <p>
+                                            Target Delivery:{" "}
+                                            <span className="text-gray-600">
+                                              {formatDate(job.delivery_window_start)}
+                                            </span>
+                                          </p>
+                                          <p>
+                                            Actual Pickup:{" "}
+                                            <span className="text-blue-800">
+                                              {job.actual_pickup_time
+                                                ? formatDate(job.actual_pickup_time)
+                                                : "Not picked up yet"}
+                                            </span>
+                                          </p>
+                                          <p>
+                                            Actual Delivery:{" "}
+                                            <span className="text-green-800">
+                                              {job.actual_delivery_time
+                                                ? formatDate(job.actual_delivery_time)
+                                                : "Not delivered yet"}
+                                            </span>
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <div className="bg-white border border-gray-200 rounded-lg p-4">
+                                        <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
+                                          Special Instructions
+                                        </p>
+                                        <p className="text-sm text-gray-800 italic">
+                                          "
+                                          {job.special_instructions ||
+                                            "No special instructions provided."}
+                                          "
+                                        </p>
+                                      </div>
+                                      <div className="lg:col-span-2">
+                                        <JobChatThread
+                                          jobId={job.id}
+                                          currentUserId={profile?.id}
+                                        />
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
 
@@ -1061,6 +1666,7 @@ export default function ProfilePage() {
                           handleUpdateLocation={handleUpdateLocation}
                           handleDownloadManifest={handleDownloadManifest}
                           formatDate={formatDate}
+                          currentUserId={profile?.id}
                         />
                       ))}
                     </div>

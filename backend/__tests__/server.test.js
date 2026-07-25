@@ -84,6 +84,17 @@ describe("LogiMatch backend routes", () => {
       })
       .mockResolvedValueOnce({
         rows: [{ status: "delivered", count: 1 }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            job_id: 1,
+            route: "Mumbai to Delhi",
+            status: "delivered",
+            accepted_price: "9000",
+            created_month: "Jul 2026",
+          },
+        ],
       });
 
     const response = await request(app)
@@ -93,6 +104,51 @@ describe("LogiMatch backend routes", () => {
     expect(response.status).toBe(200);
     expect(response.body.role).toBe("seeker");
     expect(response.body.summary.total_jobs).toBe(2);
+    expect(response.body.records).toHaveLength(1);
+  });
+
+  test("blocks unrelated users from accepted job chat", async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ seeker_id: 5, provider_id: 7 }],
+      });
+
+    const response = await request(app)
+      .get("/api/jobs/12/messages")
+      .set("Authorization", `Bearer ${tokenFor({ id: 99, role: "seeker" })}`);
+
+    expect(response.status).toBe(403);
+  });
+
+  test("sends a job chat message for an accepted participant", async () => {
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{ seeker_id: 5, provider_id: 7 }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 20,
+            job_id: 12,
+            sender_id: 5,
+            message: "Please call before pickup.",
+            created_at: "2026-07-25T10:00:00.000Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ sender_name: "Acme Foods", sender_role: "seeker" }],
+      });
+
+    const response = await request(app)
+      .post("/api/jobs/12/messages")
+      .set("Authorization", `Bearer ${tokenFor({ id: 5, role: "seeker" })}`)
+      .send({ message: "Please call before pickup." });
+
+    expect(response.status).toBe(201);
+    expect(response.body.message).toBe("Please call before pickup.");
+    expect(response.body.sender_name).toBe("Acme Foods");
   });
 
   test("blocks unrelated users from freight manifest PDF", async () => {
