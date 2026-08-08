@@ -1,4 +1,5 @@
 process.env.JWT_SECRET = "test-secret";
+process.env.RESEND_API_KEY = "";
 
 const jwt = require("jsonwebtoken");
 const request = require("supertest");
@@ -29,6 +30,28 @@ describe("LogiMatch backend routes", () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error).toMatch(/positive/);
+  });
+
+  test("rejects partial and excessive price estimate dimensions", async () => {
+    const partialResponse = await request(app).post("/api/price-estimate").send({
+      originCity: "Mumbai",
+      destCity: "Delhi",
+      weight: 100,
+      length_cm: 20,
+    });
+    const excessiveResponse = await request(app).post("/api/price-estimate").send({
+      originCity: "Mumbai",
+      destCity: "Delhi",
+      weight: 100,
+      length_cm: 10001,
+      width_cm: 20,
+      height_cm: 20,
+    });
+
+    expect(partialResponse.status).toBe(400);
+    expect(partialResponse.body.error).toMatch(/all three/);
+    expect(excessiveResponse.status).toBe(400);
+    expect(excessiveResponse.body.error).toMatch(/supported limit/);
   });
 
   test("rejects bidding on a closed job", async () => {
@@ -64,6 +87,94 @@ describe("LogiMatch backend routes", () => {
       .set("Authorization", `Bearer ${tokenFor({ id: 7, role: "driver" })}`);
 
     expect(response.status).toBe(403);
+  });
+
+  test("rejects bid acceptance after the job is assigned", async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 3,
+          job_id: 12,
+          provider_id: 7,
+          amount: 5000,
+          seeker_id: 5,
+          job_status: "assigned",
+        },
+      ],
+    });
+
+    const response = await request(app)
+      .put("/api/bids/3/accept")
+      .set("Authorization", `Bearer ${tokenFor({ id: 5, role: "seeker" })}`);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/no longer open/);
+  });
+
+  test("accepts one bid and rejects all competing bids in one transaction", async () => {
+    const client = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rowCount: 1 })
+        .mockResolvedValueOnce({ rowCount: 3 })
+        .mockResolvedValueOnce({}),
+      release: jest.fn(),
+    };
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 3,
+          job_id: 12,
+          provider_id: 7,
+          amount: 5000,
+          seeker_id: 5,
+          job_status: "open",
+        },
+      ],
+    });
+    mockPool.connect.mockResolvedValueOnce(client);
+
+    const response = await request(app)
+      .put("/api/bids/3/accept")
+      .set("Authorization", `Bearer ${tokenFor({ id: 5, role: "seeker" })}`);
+
+    expect(response.status).toBe(200);
+    expect(client.query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("CASE WHEN id = $1 THEN 'accepted' ELSE 'rejected' END"),
+      ["3", 12],
+    );
+    expect(client.query).toHaveBeenLastCalledWith("COMMIT");
+    expect(client.release).toHaveBeenCalledTimes(1);
+  });
+
+  test("blocks shipment updates from an unrelated provider", async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ status: "assigned", provider_id: 7 }],
+    });
+
+    const response = await request(app)
+      .put("/api/jobs/12/track")
+      .set("Authorization", `Bearer ${tokenFor({ id: 99, role: "driver" })}`)
+      .send({ location: "Mumbai", status: "picked_up" });
+
+    expect(response.status).toBe(403);
+    expect(mockPool.query).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects invalid shipment transitions", async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ status: "assigned", provider_id: 7 }],
+    });
+
+    const response = await request(app)
+      .put("/api/jobs/12/track")
+      .set("Authorization", `Bearer ${tokenFor({ id: 7, role: "driver" })}`)
+      .send({ location: "Delhi", status: "delivered" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/cannot move/);
   });
 
   test("returns seeker insights summary", async () => {
@@ -149,6 +260,67 @@ describe("LogiMatch backend routes", () => {
     expect(response.status).toBe(201);
     expect(response.body.message).toBe("Please call before pickup.");
     expect(response.body.sender_name).toBe("Acme Foods");
+  });
+
+  test("rejects empty and oversized chat messages", async () => {
+    const token = tokenFor({ id: 5, role: "seeker" });
+    const emptyResponse = await request(app)
+      .post("/api/jobs/12/messages")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ message: "   " });
+    const oversizedResponse = await request(app)
+      .post("/api/jobs/12/messages")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ message: "x".repeat(1001) });
+
+    expect(emptyResponse.status).toBe(400);
+    expect(emptyResponse.body.error).toMatch(/empty/);
+    expect(oversizedResponse.status).toBe(400);
+    expect(oversizedResponse.body.error).toMatch(/too long/);
+  });
+
+  test("allows only the seeker to rate the assigned provider", async () => {
+    mockPool.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        rows: [{ seeker_id: 5, provider_id: 7, status: "delivered" }],
+      });
+
+    const response = await request(app)
+      .post("/api/users/7/rate")
+      .set("Authorization", `Bearer ${tokenFor({ id: 7, role: "driver" })}`)
+      .send({ job_id: 12, score: 5 });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toMatch(/shipment seeker/);
+  });
+
+  test("prevents rating the same completed shipment twice", async () => {
+    const duplicateError = Object.assign(new Error("duplicate"), { code: "23505" });
+    const client = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(duplicateError)
+        .mockResolvedValueOnce({}),
+      release: jest.fn(),
+    };
+    mockPool.query
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        rows: [{ seeker_id: 5, provider_id: 7, status: "delivered" }],
+      });
+    mockPool.connect.mockResolvedValueOnce(client);
+
+    const response = await request(app)
+      .post("/api/users/7/rate")
+      .set("Authorization", `Bearer ${tokenFor({ id: 5, role: "seeker" })}`)
+      .send({ job_id: 12, score: 5 });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toMatch(/already been rated/);
+    expect(client.query).toHaveBeenLastCalledWith("ROLLBACK");
+    expect(client.release).toHaveBeenCalledTimes(1);
   });
 
   test("blocks unrelated users from freight manifest PDF", async () => {

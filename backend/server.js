@@ -77,6 +77,22 @@ const ensureChatMessagesTable = async () => {
   chatMessagesTableReady = true;
 };
 
+const ensureRatingsTable = () =>
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS ratings (
+      id SERIAL PRIMARY KEY,
+      job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE,
+      rater_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      rated_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      score SMALLINT NOT NULL CHECK (score BETWEEN 1 AND 5),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      UNIQUE (job_id, rater_id, rated_user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ratings_rated_user
+      ON ratings(rated_user_id, created_at);
+  `);
+
 const priceConfig = {
   dieselPricePerLitre: Number(process.env.PRICE_DIESEL_PER_LITRE || 95),
   fuelEfficiencyKmPerLitre: Number(process.env.PRICE_FUEL_EFFICIENCY || 4),
@@ -87,6 +103,12 @@ const priceConfig = {
   densityKgPerM3: Number(process.env.PRICE_DENSITY_KG_PER_M3 || 250),
   lowRangeMultiplier: Number(process.env.PRICE_LOW_RANGE_MULTIPLIER || 0.9),
   highRangeMultiplier: Number(process.env.PRICE_HIGH_RANGE_MULTIPLIER || 1.15),
+};
+
+const priceInputLimits = {
+  cityLength: 120,
+  weightKg: 1000000,
+  dimensionCm: 10000,
 };
 
 const packagingSurcharge = {
@@ -667,7 +689,7 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
 });
 
 // ---------------------------------
-// Route: Advanced AI Price Engine
+// Route: Recommended-Price Estimator
 // ---------------------------------
 app.post("/api/price-estimate", async (req, res) => {
   try {
@@ -687,14 +709,25 @@ app.post("/api/price-estimate", async (req, res) => {
     } = req.body;
 
     const numericWeight = Number(weight);
+    const normalizedOriginCity =
+      typeof originCity === "string" ? originCity.trim() : "";
+    const normalizedDestCity =
+      typeof destCity === "string" ? destCity.trim() : "";
     const dimensions = [length_cm, width_cm, height_cm].map((value) =>
       value === "" || value === undefined || value === null ? null : Number(value),
     );
 
-    if (!originCity || !destCity) {
+    if (!normalizedOriginCity || !normalizedDestCity) {
       return res
         .status(400)
         .json({ error: "Origin and destination cities are required." });
+    }
+
+    if (
+      normalizedOriginCity.length > priceInputLimits.cityLength ||
+      normalizedDestCity.length > priceInputLimits.cityLength
+    ) {
+      return res.status(400).json({ error: "City names are too long." });
     }
 
     if (!Number.isFinite(numericWeight) || numericWeight <= 0) {
@@ -703,12 +736,32 @@ app.post("/api/price-estimate", async (req, res) => {
         .json({ error: "Cargo weight must be a positive number." });
     }
 
+    if (numericWeight > priceInputLimits.weightKg) {
+      return res.status(400).json({ error: "Cargo weight exceeds the supported limit." });
+    }
+
+    const hasAnyDimension = dimensions.some((value) => value !== null);
+    const hasAllDimensions = dimensions.every((value) => value !== null);
+    if (hasAnyDimension && !hasAllDimensions) {
+      return res.status(400).json({
+        error: "Provide all three cargo dimensions or leave all dimensions blank.",
+      });
+    }
+
     if (
       dimensions.some((value) => value !== null && (!Number.isFinite(value) || value <= 0))
     ) {
       return res
         .status(400)
         .json({ error: "Cargo dimensions must be positive numbers." });
+    }
+
+    if (
+      dimensions.some(
+        (value) => value !== null && value > priceInputLimits.dimensionCm,
+      )
+    ) {
+      return res.status(400).json({ error: "Cargo dimensions exceed the supported limit." });
     }
 
     if (!packagingSurcharge.hasOwnProperty(packaging_type || "Palletized")) {
@@ -736,8 +789,8 @@ app.post("/api/price-estimate", async (req, res) => {
       return coords;
     };
 
-    const originCoords = await getCoords(originCity);
-    const destCoords = await getCoords(destCity);
+    const originCoords = await getCoords(normalizedOriginCity);
+    const destCoords = await getCoords(normalizedDestCity);
     const distanceKm = haversine(originCoords, destCoords, { unit: "km" });
 
     const fuelCostPerKm =
@@ -1044,21 +1097,66 @@ app.put("/api/jobs/:id/track", verifyToken, async (req, res) => {
   try {
     const { location, status } = req.body;
     const jobId = req.params.id;
+    const normalizedLocation =
+      typeof location === "string" ? location.trim() : "";
 
-    let milestoneQuery = "";
-    let queryParams = [location, status, jobId];
-
-    if (status === "picked_up") {
-      milestoneQuery = `UPDATE jobs SET current_location = $1, status = $2, actual_pickup_time = NOW() WHERE id = $3`;
-    } else if (status === "delivered") {
-      milestoneQuery = `UPDATE jobs SET current_location = $1, status = $2, actual_delivery_time = NOW() WHERE id = $3`;
-    } else {
-      milestoneQuery = `UPDATE jobs SET current_location = $1, status = $2 WHERE id = $3`;
+    if (req.user.role !== "driver") {
+      return res.status(403).json({ error: "Only the accepted provider can update a shipment." });
     }
 
-    await pool.query(milestoneQuery, queryParams);
+    if (!normalizedLocation || normalizedLocation.length > 255) {
+      return res.status(400).json({ error: "A valid shipment location is required." });
+    }
 
-    if ((status === "delivered" || status === "completed") && process.env.RESEND_API_KEY) {
+    if (!new Set(["picked_up", "delivered"]).has(status)) {
+      return res.status(400).json({ error: "Invalid shipment status." });
+    }
+
+    const accessResult = await pool.query(
+      `SELECT j.status, b.provider_id
+       FROM jobs j
+       JOIN bids b ON b.job_id = j.id AND b.status = 'accepted'
+       WHERE j.id = $1`,
+      [jobId],
+    );
+
+    if (accessResult.rows.length === 0) {
+      return res.status(404).json({ error: "Accepted shipment not found." });
+    }
+
+    const shipment = accessResult.rows[0];
+    if (Number(shipment.provider_id) !== Number(req.user.id)) {
+      return res.status(403).json({ error: "Only the accepted provider can update this shipment." });
+    }
+
+    const allowedTransitions = {
+      assigned: new Set(["picked_up"]),
+      picked_up: new Set(["picked_up", "delivered"]),
+    };
+    const allowedNextStatuses = allowedTransitions[shipment.status];
+    if (!allowedNextStatuses || !allowedNextStatuses.has(status)) {
+      return res.status(400).json({
+        error: `Shipment cannot move from ${shipment.status} to ${status}.`,
+      });
+    }
+
+    const timestampUpdate =
+      status === "delivered"
+        ? "actual_delivery_time = COALESCE(actual_delivery_time, NOW())"
+        : "actual_pickup_time = COALESCE(actual_pickup_time, NOW())";
+    const updateResult = await pool.query(
+      `UPDATE jobs
+       SET current_location = $1, status = $2, ${timestampUpdate}
+       WHERE id = $3 AND status = $4
+       RETURNING id`,
+      [normalizedLocation, status, jobId, shipment.status],
+    );
+
+    if (updateResult.rowCount === 0) {
+      return res.status(409).json({ error: "Shipment status changed. Refresh and try again." });
+    }
+
+    if (status === "delivered" && process.env.RESEND_API_KEY) {
       try {
         const notificationResult = await pool.query(
           `SELECT
@@ -1306,11 +1404,64 @@ app.put("/api/users/password", verifyToken, async (req, res) => {
 // ---------------------------------
 app.post("/api/users/:id/rate", verifyToken, async (req, res) => {
   try {
-    const { score } = req.body;
-    await pool.query(
-      "UPDATE users SET rating_sum = rating_sum + $1, rating_count = rating_count + 1 WHERE id = $2",
-      [score, req.params.id],
+    const ratedUserId = Number(req.params.id);
+    const jobId = Number(req.body.job_id);
+    const score = Number(req.body.score);
+
+    if (!Number.isInteger(jobId) || !Number.isInteger(ratedUserId)) {
+      return res.status(400).json({ error: "A valid completed job is required." });
+    }
+    if (!Number.isInteger(score) || score < 1 || score > 5) {
+      return res.status(400).json({ error: "Rating must be an integer from 1 to 5." });
+    }
+
+    await ensureRatingsTable();
+    const jobResult = await pool.query(
+      `SELECT j.seeker_id, j.status, b.provider_id
+       FROM jobs j
+       JOIN bids b ON b.job_id = j.id AND b.status = 'accepted'
+       WHERE j.id = $1`,
+      [jobId],
     );
+
+    if (jobResult.rows.length === 0) {
+      return res.status(404).json({ error: "Completed shipment not found." });
+    }
+
+    const job = jobResult.rows[0];
+    if (Number(job.seeker_id) !== Number(req.user.id) || req.user.role !== "seeker") {
+      return res.status(403).json({ error: "Only the shipment seeker can rate its provider." });
+    }
+    if (Number(job.provider_id) !== ratedUserId) {
+      return res.status(400).json({ error: "The selected provider was not assigned to this shipment." });
+    }
+    if (job.status !== "delivered") {
+      return res.status(400).json({ error: "The shipment must be delivered before it can be rated." });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `INSERT INTO ratings (job_id, rater_id, rated_user_id, score)
+         VALUES ($1, $2, $3, $4)`,
+        [jobId, req.user.id, ratedUserId, score],
+      );
+      await client.query(
+        "UPDATE users SET rating_sum = rating_sum + $1, rating_count = rating_count + 1 WHERE id = $2",
+        [score, ratedUserId],
+      );
+      await client.query("COMMIT");
+    } catch (transactionError) {
+      await client.query("ROLLBACK");
+      if (transactionError.code === "23505") {
+        return res.status(409).json({ error: "This shipment has already been rated." });
+      }
+      throw transactionError;
+    } finally {
+      client.release();
+    }
+
     res.status(200).json({ message: "Rated successfully" });
   } catch (error) {
     console.error("Rating error:", error.message);
@@ -1323,6 +1474,7 @@ app.post("/api/users/:id/rate", verifyToken, async (req, res) => {
 // ---------------------------------
 app.get("/api/profile/my-jobs", verifyToken, async (req, res) => {
   try {
+    await ensureRatingsTable();
     const query = `
       SELECT 
         j.id, j.origin, j.destination, j.weight_kg, j.status,
@@ -1334,6 +1486,11 @@ app.get("/api/profile/my-jobs", verifyToken, async (req, res) => {
         j.delivery_window_start, j.delivery_window_end,
         j.requires_liftgate, j.requires_loading_dock,
         j.special_instructions,
+        EXISTS (
+          SELECT 1
+          FROM ratings r
+          WHERE r.job_id = j.id AND r.rater_id = $1
+        ) AS has_rated,
         COALESCE(
           json_agg(
             json_build_object(

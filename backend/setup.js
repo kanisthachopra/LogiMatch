@@ -71,6 +71,17 @@ const createTables = async () => {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
 
+    -- 5. COMPLETED JOB RATINGS TABLE
+    CREATE TABLE IF NOT EXISTS ratings (
+      id SERIAL PRIMARY KEY,
+      job_id INTEGER REFERENCES jobs(id) ON DELETE CASCADE,
+      rater_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      rated_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      score SMALLINT NOT NULL CHECK (score BETWEEN 1 AND 5),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      UNIQUE (job_id, rater_id, rated_user_id)
+    );
+
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT false;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS otp VARCHAR(6);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMP WITH TIME ZONE;
@@ -104,12 +115,15 @@ const createTables = async () => {
 
     CREATE INDEX IF NOT EXISTS idx_chat_messages_job_created
       ON chat_messages(job_id, created_at, id);
+
+    CREATE INDEX IF NOT EXISTS idx_ratings_rated_user
+      ON ratings(rated_user_id, created_at);
   `;
 
   try {
     await pool.query(queryText);
     console.log(
-      "Success! All LogiMatch tables created with the definitive Milestone 2 schema.",
+      "Success! All LogiMatch tables created with the final project schema.",
     );
   } catch (error) {
     console.error("Error creating tables:", error);

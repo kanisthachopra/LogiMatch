@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { apiUrl } from "@/lib/api";
+import { apiUrl, waitForBackend } from "@/lib/api";
 
 // ==========================================
 // 1. THE JOB CARD COMPONENT
@@ -9,15 +9,41 @@ import { apiUrl } from "@/lib/api";
 function JobCard({
   job,
   currentUserId,
+  currentUserRole,
 }: {
   job: any;
   currentUserId: string | null;
+  currentUserRole: string | null;
 }) {
   const [bidAmount, setBidAmount] = useState("");
   const [showSeekerProfile, setShowSeekerProfile] = useState(false);
   const [showManifest, setShowManifest] = useState(false);
+  const [isBidModalOpen, setIsBidModalOpen] = useState(false);
+  const [isSubmittingBid, setIsSubmittingBid] = useState(false);
+  const [bidFeedback, setBidFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const numericBidAmount = Number(bidAmount);
+
+  const openBidConfirmation = () => {
+    setBidFeedback(null);
+    if (!Number.isFinite(numericBidAmount) || numericBidAmount <= 0) {
+      setBidFeedback({
+        type: "error",
+        message: "Enter a valid bid amount greater than zero.",
+      });
+      return;
+    }
+    setIsBidModalOpen(true);
+  };
 
   const handleBidSubmit = async () => {
+    if (isSubmittingBid) return;
+    setIsSubmittingBid(true);
+    setBidFeedback(null);
+
     try {
       const response = await fetch(apiUrl("/api/bids"), {
         method: "POST",
@@ -34,18 +60,31 @@ function JobCard({
         return;
       }
 
+      const data = await response.json();
       if (response.ok) {
-        alert(`Success! Bid of ₹${bidAmount} placed on Job #${job.id}`);
-        window.location.reload();
+        setBidFeedback({
+          type: "success",
+          message: `Bid of ₹${numericBidAmount.toLocaleString("en-IN")} submitted successfully.`,
+        });
+        setBidAmount("");
       } else {
-        alert("Failed to place bid.");
+        setBidFeedback({
+          type: "error",
+          message: data.error || "The bid could not be submitted. Please try again.",
+        });
       }
-    } catch (error) {
-      console.error("Connection error:", error);
+    } catch {
+      setBidFeedback({
+        type: "error",
+        message: "The service could not be reached. Please try again.",
+      });
+    } finally {
+      setIsSubmittingBid(false);
     }
   };
 
   const isMyJob = currentUserId === String(job.seeker_id);
+  const canBid = currentUserRole === "driver" && !isMyJob;
 
   const renderStars = (sum: number, count: number) => {
     const avg = count > 0 ? Math.round(sum / count) : 0;
@@ -65,7 +104,7 @@ function JobCard({
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow relative">
       {/* Top Right Action Buttons */}
-      <div className="absolute top-6 right-6 flex gap-2">
+      <div className="mb-4 flex flex-wrap justify-end gap-2 sm:absolute sm:top-6 sm:right-6 sm:mb-0">
         <button
           onClick={() => setShowManifest(!showManifest)}
           className="text-xs font-bold text-gray-700 bg-gray-100 px-3 py-1 rounded-full hover:bg-gray-200 transition-colors"
@@ -82,7 +121,7 @@ function JobCard({
 
       {/* Main Header */}
       <div className="border-b border-gray-100 pb-4 mb-4">
-        <h3 className="text-xl font-bold text-gray-900 flex items-center gap-3 pr-48">
+        <h3 className="text-xl font-bold text-gray-900 flex flex-wrap items-center gap-3 sm:pr-48">
           {job.origin.split(",")[0]}{" "}
           <span className="text-gray-400 text-sm">➔</span>{" "}
           {job.destination.split(",")[0]}
@@ -255,8 +294,13 @@ function JobCard({
         <div className="text-center py-3 bg-gray-100 rounded-lg text-gray-500 text-sm font-bold border border-gray-200">
           This is your cargo. Go to Job History to accept bids.
         </div>
+      ) : !canBid ? (
+        <div className="text-center py-3 bg-gray-100 rounded-lg text-gray-500 text-sm font-bold border border-gray-200">
+          Provider accounts can submit bids on open jobs.
+        </div>
       ) : (
-        <div className="flex gap-3 items-center">
+        <div className="space-y-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-grow">
             <span className="absolute left-3 top-2.5 text-gray-500 font-bold">
               ₹
@@ -266,15 +310,106 @@ function JobCard({
               placeholder="Enter your competitive bid"
               value={bidAmount}
               onChange={(e) => setBidAmount(e.target.value)}
+              min="0.01"
+              step="0.01"
               className="w-full pl-8 pr-4 py-2.5 border border-gray-300 rounded-lg bg-white text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 font-bold"
             />
           </div>
           <button
-            onClick={handleBidSubmit}
-            className="whitespace-nowrap bg-gray-900 text-white font-black py-2.5 px-6 rounded-lg hover:bg-black shadow-md transition-colors"
+            onClick={openBidConfirmation}
+            className="w-full whitespace-nowrap bg-gray-900 text-white font-black py-2.5 px-6 rounded-lg hover:bg-black shadow-md transition-colors sm:w-auto"
           >
             Submit Bid
           </button>
+          </div>
+          {bidFeedback?.type === "error" && !isBidModalOpen && (
+            <p className="text-sm font-bold text-red-700" role="alert">
+              {bidFeedback.message}
+            </p>
+          )}
+        </div>
+      )}
+
+      {isBidModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={`bid-confirmation-${job.id}`}
+          data-testid="bid-confirmation-modal"
+        >
+          <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-5 shadow-2xl sm:p-6">
+            {bidFeedback?.type === "success" ? (
+              <div className="space-y-5 text-center">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100 text-2xl text-green-700">
+                  ✓
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-gray-900">Bid submitted</h3>
+                  <p className="mt-2 text-sm font-medium text-gray-600" role="status">
+                    {bidFeedback.message}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="w-full rounded-lg bg-gray-900 px-4 py-3 font-black text-white hover:bg-black"
+                >
+                  Return to Market
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-blue-700">
+                    Confirm provider bid
+                  </p>
+                  <h3
+                    id={`bid-confirmation-${job.id}`}
+                    className="mt-2 text-xl font-black text-gray-900"
+                  >
+                    {job.origin.split(",")[0]} to {job.destination.split(",")[0]}
+                  </h3>
+                  <p className="mt-1 text-sm font-medium text-gray-500">Job #{job.id}</p>
+                </div>
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                  <p className="text-xs font-black uppercase tracking-widest text-blue-700">
+                    Your bid
+                  </p>
+                  <p className="mt-1 text-3xl font-black text-gray-900">
+                    ₹{numericBidAmount.toLocaleString("en-IN")}
+                  </p>
+                </div>
+                <p className="text-sm font-medium text-gray-600">
+                  Review the route and amount before sending this bid to the seeker.
+                </p>
+                {bidFeedback?.type === "error" && (
+                  <p className="rounded-lg bg-red-50 p-3 text-sm font-bold text-red-700" role="alert">
+                    {bidFeedback.message}
+                  </p>
+                )}
+                <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setIsBidModalOpen(false)}
+                    disabled={isSubmittingBid}
+                    className="rounded-lg border border-gray-300 px-4 py-2.5 font-bold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Cancel / Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBidSubmit}
+                    disabled={isSubmittingBid}
+                    className="rounded-lg bg-blue-600 px-5 py-2.5 font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    data-testid="confirm-bid-button"
+                  >
+                    {isSubmittingBid ? "Submitting..." : "Confirm Bid"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -288,6 +423,11 @@ export default function UnifiedDashboardPage() {
   const [jobs, setJobs] = useState([]);
   const [myHistory, setMyHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [connectionMessage, setConnectionMessage] = useState(
+    "Connecting to LogiMatch...",
+  );
+  const [loadError, setLoadError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
 
@@ -338,15 +478,25 @@ export default function UnifiedDashboardPage() {
     setCurrentUserRole(localStorage.getItem("userRole"));
 
     const fetchData = async () => {
+      setIsLoading(true);
+      setLoadError(false);
       try {
+        await waitForBackend({
+          onAttempt: (attempt) =>
+            setConnectionMessage(
+              attempt === 1
+                ? "Connecting to LogiMatch..."
+                : "The backend is waking up. Retrying...",
+            ),
+        });
+
         const headers = {
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         };
 
         const jobsRes = await fetch(apiUrl("/api/jobs"));
-        if (jobsRes.ok) {
-          setJobs(await jobsRes.json());
-        }
+        if (!jobsRes.ok) throw new Error("MARKET_LOAD_FAILED");
+        setJobs(await jobsRes.json());
 
         if (localStorage.getItem("token")) {
           const historyRes = await fetch(
@@ -357,15 +507,15 @@ export default function UnifiedDashboardPage() {
             setMyHistory(await historyRes.json());
           }
         }
-      } catch (error) {
-        console.error(error);
+      } catch {
+        setLoadError(true);
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchData();
-  }, []);
+  }, [loadAttempt]);
 
   const isSeeker = currentUserRole === "seeker";
 
@@ -424,7 +574,7 @@ export default function UnifiedDashboardPage() {
     return value.trim() === "" || !Number.isFinite(parsed) ? null : parsed;
   };
 
-  // AI Pricing Engine Handler
+  // Recommended-price estimator
   const handleCalculatePrice = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (!origin || !destination || !weight) {
@@ -686,9 +836,29 @@ export default function UnifiedDashboardPage() {
 
         <div className="flex flex-col gap-5">
           {isLoading ? (
-            <p className="text-gray-500 font-bold text-lg animate-pulse text-center py-12">
-              Loading live market data...
-            </p>
+            <div className="flex flex-col items-center justify-center py-14 text-center" role="status">
+              <div className="h-9 w-9 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
+              <p className="mt-4 text-base font-bold text-gray-600">
+                {connectionMessage}
+              </p>
+              <p className="mt-1 text-sm font-medium text-gray-400">
+                Free hosting can take a little longer after inactivity.
+              </p>
+            </div>
+          ) : loadError ? (
+            <div className="rounded-lg border border-red-200 bg-white px-5 py-10 text-center">
+              <h3 className="text-lg font-black text-gray-900">Could not reach the service</h3>
+              <p className="mt-2 text-sm font-medium text-gray-600">
+                Check your connection and try again. Your account data has not been changed.
+              </p>
+              <button
+                type="button"
+                onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+                className="mt-5 rounded-lg bg-blue-600 px-5 py-2.5 font-black text-white hover:bg-blue-700"
+              >
+                Retry Connection
+              </button>
+            </div>
           ) : filteredJobs.length === 0 ? (
             <div className="text-center py-16 bg-white rounded-xl border border-dashed border-gray-300">
               <span className="text-4xl block mb-3">🏜️</span>
@@ -710,7 +880,12 @@ export default function UnifiedDashboardPage() {
             </div>
           ) : (
             filteredJobs.map((job: any) => (
-              <JobCard key={job.id} job={job} currentUserId={currentUserId} />
+              <JobCard
+                key={job.id}
+                job={job}
+                currentUserId={currentUserId}
+                currentUserRole={currentUserRole}
+              />
             ))
           )}
         </div>
@@ -981,7 +1156,7 @@ export default function UnifiedDashboardPage() {
                       Budget Setup
                     </h4>
                     <p className="text-sm text-gray-500 font-medium mt-1">
-                      Use our AI to calculate a fair India-wide standard rate.
+                      Use the cost model to calculate a recommended India-wide rate.
                     </p>
                   </div>
                   <button
