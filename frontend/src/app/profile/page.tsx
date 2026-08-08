@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { apiUrl, authHeaders } from "@/lib/api";
+import { apiUrl, authHeaders, waitForBackend } from "@/lib/api";
 
 // ==========================================
 // 1. DRIVER TRACKING CARD COMPONENT
@@ -136,11 +136,11 @@ function DriverTrackingCard({
             </div>
           </div>
 
-          {/* DRIVER REAL-TIME CONTROL PANEL */}
+          {/* Provider shipment controls */}
           <div className="bg-blue-50 p-5 rounded-xl border-2 border-blue-200 shadow-inner flex flex-col justify-between">
             <div>
               <p className="text-xs font-black text-blue-800 uppercase tracking-widest mb-2 flex items-center gap-1">
-                <span>📍</span> Live Terminal Control
+                <span>📍</span> Update Shipment
               </p>
               <p className="font-black text-xl text-gray-900 mb-4 bg-white p-3 rounded-lg border border-blue-100 shadow-sm">
                 Current:{" "}
@@ -205,7 +205,7 @@ function DriverTrackingCard({
                         }}
                         className="w-full bg-blue-200 text-blue-900 font-black px-4 py-3 rounded-lg hover:bg-blue-300 transition-colors shadow-sm cursor-pointer whitespace-nowrap"
                       >
-                        Update GPS
+                        Update Location
                       </button>
                     </div>
                     <button
@@ -1078,6 +1078,11 @@ export default function ProfilePage() {
   const [activeBids, setActiveBids] = useState([]);
   const [insights, setInsights] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [connectionMessage, setConnectionMessage] = useState(
+    "Connecting to LogiMatch...",
+  );
+  const [loadError, setLoadError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const [bio, setBio] = useState("");
   const [companyName, setCompanyName] = useState("");
@@ -1099,12 +1104,23 @@ export default function ProfilePage() {
 
   useEffect(() => {
     const fetchProfileData = async () => {
+      setIsLoading(true);
+      setLoadError(false);
       try {
         const token = localStorage.getItem("token");
         if (!token) {
           window.location.href = "/login";
           return;
         }
+
+        await waitForBackend({
+          onAttempt: (attempt) =>
+            setConnectionMessage(
+              attempt === 1
+                ? "Connecting to LogiMatch..."
+                : "The backend is waking up. Retrying...",
+            ),
+        });
 
         const headers = { Authorization: `Bearer ${token}` };
 
@@ -1123,6 +1139,15 @@ export default function ProfilePage() {
           return;
         }
 
+        if (
+          !profileRes.ok ||
+          !myJobsRes.ok ||
+          !wonJobsRes.ok ||
+          !activeBidsRes.ok
+        ) {
+          throw new Error("PROFILE_LOAD_FAILED");
+        }
+
         const profileData = await profileRes.json();
         setProfile(profileData);
         setMyJobs(await myJobsRes.json());
@@ -1138,14 +1163,14 @@ export default function ProfilePage() {
         setBannerPhoto(profileData.banner_photo || "");
         setBusinessDocUrl(profileData.business_doc_url || "");
         setIsPublic(profileData.is_public ?? true);
-      } catch (error) {
-        console.error("Error fetching profile data:", error);
+      } catch {
+        setLoadError(true);
       } finally {
         setIsLoading(false);
       }
     };
     fetchProfileData();
-  }, []);
+  }, [loadAttempt]);
 
   const handleLogout = () => {
     localStorage.clear();
@@ -1230,7 +1255,7 @@ export default function ProfilePage() {
     location: string,
     status: string,
   ) => {
-    if (!location && status !== "picked_up" && status !== "delivered") {
+    if (!location.trim()) {
       return alert("Please enter a location first.");
     }
     try {
@@ -1248,13 +1273,20 @@ export default function ProfilePage() {
       if (response.ok) {
         alert("Logistics Milestone & Timestamp Logged successfully! 📍");
         window.location.reload();
+      } else {
+        const data = await response.json();
+        alert(data.error || "The shipment update could not be saved.");
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      alert("The tracking service could not be reached. Please try again.");
     }
   };
 
-  const handleRateProvider = async (providerId: string, score: number) => {
+  const handleRateProvider = async (
+    providerId: string,
+    jobId: string | number,
+    score: number,
+  ) => {
     if (!confirm(`Submit a ${score}-Star rating for this driver?`)) return;
     try {
       const response = await fetch(
@@ -1265,7 +1297,7 @@ export default function ProfilePage() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${localStorage.getItem("token")}`,
           },
-          body: JSON.stringify({ score }),
+          body: JSON.stringify({ score, job_id: jobId }),
         },
       );
       if (response.ok) {
@@ -1273,9 +1305,12 @@ export default function ProfilePage() {
           `Thank you! A ${score}-Star rating has been added to their profile. ⭐`,
         );
         window.location.reload();
+      } else {
+        const data = await response.json();
+        alert(data.error || "The rating could not be submitted.");
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      alert("The rating service could not be reached. Please try again.");
     }
   };
 
@@ -1297,9 +1332,34 @@ export default function ProfilePage() {
   if (isLoading)
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <p className="animate-pulse text-gray-800 font-bold text-xl tracking-widest uppercase">
-          Loading Enterprise Hub...
-        </p>
+        <div className="flex flex-col items-center px-6 text-center" role="status">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
+          <p className="mt-4 text-lg font-bold text-gray-800">
+            {connectionMessage}
+          </p>
+          <p className="mt-1 text-sm font-medium text-gray-500">
+            Free hosting can take a little longer after inactivity.
+          </p>
+        </div>
+      </div>
+    );
+
+  if (loadError)
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <div className="w-full max-w-md rounded-lg border border-red-200 bg-white p-6 text-center shadow-sm">
+          <h1 className="text-xl font-black text-gray-900">Could not load your account</h1>
+          <p className="mt-2 text-sm font-medium text-gray-600">
+            Check your connection and try again. No profile or shipment data was changed.
+          </p>
+          <button
+            type="button"
+            onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+            className="mt-5 rounded-lg bg-blue-600 px-5 py-2.5 font-black text-white hover:bg-blue-700"
+          >
+            Retry Connection
+          </button>
+        </div>
       </div>
     );
 
@@ -1592,7 +1652,7 @@ export default function ProfilePage() {
             {(myJobs.length > 0 || profile?.role === "seeker") && (
               <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-sm">
                 <h3 className="text-xl font-black text-gray-900 mb-6 flex items-center gap-2">
-                  📦 Freight I'm Shipping
+                  📦 My Active Shipments
                 </h3>
                 {myJobs.filter((j: any) => j.status !== "open").length === 0 ? (
                   <div className="bg-gray-50 border border-dashed border-gray-300 rounded-xl p-8 text-center">
@@ -1851,27 +1911,35 @@ export default function ProfilePage() {
                                       Shipment Arrived Safely!
                                     </p>
                                     <p className="text-sm text-green-800 font-medium">
-                                      Please rate your experience with{" "}
-                                      {winningBid.provider_name}.
+                                      {job.has_rated
+                                        ? `Your rating for ${winningBid.provider_name} has been recorded.`
+                                        : `Please rate your experience with ${winningBid.provider_name}.`}
                                     </p>
                                   </div>
-                                  <div className="flex gap-2 bg-white p-2 rounded-lg border border-green-200 shadow-inner">
-                                    {[1, 2, 3, 4, 5].map((star) => (
-                                      <button
-                                        key={star}
-                                        onClick={() =>
-                                          handleRateProvider(
-                                            winningBid.provider_id,
-                                            star,
-                                          )
-                                        }
-                                        className="text-3xl hover:scale-125 transform transition-transform filter drop-shadow-sm cursor-pointer"
-                                        title={`Rate ${star} Stars`}
-                                      >
-                                        ⭐
-                                      </button>
-                                    ))}
-                                  </div>
+                                  {job.has_rated ? (
+                                    <span className="rounded-lg border border-green-200 bg-white px-4 py-2 text-sm font-black text-green-700">
+                                      Rating submitted
+                                    </span>
+                                  ) : (
+                                    <div className="flex gap-1 bg-white p-2 rounded-lg border border-green-200 shadow-inner sm:gap-2">
+                                      {[1, 2, 3, 4, 5].map((star) => (
+                                        <button
+                                          key={star}
+                                          onClick={() =>
+                                            handleRateProvider(
+                                              winningBid.provider_id,
+                                              job.id,
+                                              star,
+                                            )
+                                          }
+                                          className="text-2xl hover:scale-125 transform transition-transform filter drop-shadow-sm cursor-pointer sm:text-3xl"
+                                          title={`Rate ${star} Stars`}
+                                        >
+                                          ⭐
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -1889,7 +1957,7 @@ export default function ProfilePage() {
               wonJobs.length > 0) && (
               <div className="bg-blue-50 p-6 sm:p-8 rounded-2xl border border-blue-100 shadow-sm">
                 <h3 className="text-xl font-black text-blue-900 mb-8 flex items-center gap-2">
-                  🚚 Freight I'm Hauling
+                  🚚 Provider Operations
                 </h3>
 
                 {/* Active Auctions */}

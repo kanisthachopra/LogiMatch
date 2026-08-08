@@ -80,7 +80,7 @@ export default function LandingPage() {
               🧮
             </div>
             <h3 className="text-xl font-extrabold text-gray-900 mb-3">
-              AI Pricing Model
+              Recommended-Price Model
             </h3>
             <p className="text-sm text-gray-600 font-medium leading-relaxed">
               Instantly calculate fair baseline freight budgets using live
